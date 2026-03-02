@@ -1381,7 +1381,10 @@ def evaluate_alerts(
             fired.append("Objectif gain atteint")
 
     if not holdings.empty and safe_float(state.get("portfolio_value", 0.0), 0.0) > 0:
-        top = float(holdings["valeur_marche"].max() / state["portfolio_value"] * 100)
+        if "valeur_marche" in holdings.columns:
+    top = float(holdings["valeur_marche"].max() / state["portfolio_value"] * 100)
+else:
+    top = 0.0
         if top > max_line_pct:
             if insert_alert(conn, "concentration_line", "MEDIUM", "Concentration excessive", f"Ligne max: {top:.2f}% (> {max_line_pct:.2f}%)."):
                 fired.append("Concentration excessive")
