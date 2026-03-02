@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import hashlib
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -22,32 +23,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import jwt
-import streamlit as st
 
-def authenticate_user():
-    """Vérifie le token JWT envoyé par Base44"""
-    token = st.query_params.get("token")
-    
-    if not token:
-        st.error("🔒 Accès refusé. Veuillez accéder au simulateur depuis LibertyCapital.")
-        st.stop()
-    
-    try:
-        secret = st.secrets["SHARED_SECRET"]
-        payload = jwt.decode(token, secret, algorithms=["HS256"])
-        return payload  # contient: email, name, iat, exp
-    except jwt.ExpiredSignatureError:
-        st.error("⏰ Session expirée. Retournez sur LibertyCapital et relancez le simulateur.")
-        st.stop()
-    except jwt.InvalidTokenError:
-        st.error("🔒 Token invalide. Accès non autorisé.")
-        st.stop()
-
-# Au tout début de votre app :
-user = authenticate_user()
-st.session_state["user_email"] = user["email"]
-st.session_state["user_name"] = user["name"]
 from portfolio_tool.data import get_market_clock
 
 try:
@@ -76,6 +52,15 @@ DEFAULT_ALERT_DRAWDOWN_PCT = -10.0
 DEFAULT_ALERT_GAIN_PCT = 10.0
 DISPLAY_TZ = ZoneInfo("Europe/Paris")
 DB_PATH = Path("data/portfolio_simulator.db")
+
+
+def user_db_path(user_email: str) -> Path:
+    """Return a per-user sqlite DB path (stable, private) based on a hash of the user email."""
+    base_dir = Path("data/users")
+    base_dir.mkdir(parents=True, exist_ok=True)
+    safe_user = hashlib.sha256(user_email.strip().lower().encode("utf-8")).hexdigest()[:24]
+    return base_dir / f"{safe_user}.db"
+
 LOG_PATH = Path("output/portfolio_app.log")
 ALERT_COOLDOWN_SECONDS = 600
 
@@ -510,13 +495,13 @@ def get_polygon_tick_stream() -> PolygonTickStream:
 
 
 @st.cache_resource
-def get_connection() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+def get_connection(db_path_str: str) -> sqlite3.Connection:
+    db_path = Path(db_path_str)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     init_db(conn)
     return conn
-
 
 def ensure_column_exists(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
     columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
@@ -1981,10 +1966,17 @@ def structured_ai_recommendations(
 
 
 def main() -> None:
-    setup_logger()
+setup_logger()
+# --- Auth Base44 (JWT) ---
+user = authenticate_user()
+st.session_state["user_email"] = user["email"]
+st.session_state["user_name"] = user.get("name", "")
+
+# --- Per-user DB (isolation) ---
+db_path = user_db_path(st.session_state["user_email"])
+conn = get_connection(str(db_path))
     st.set_page_config(page_title=APP_TITLE, page_icon="📈", layout="wide")
     render_css()
-    conn = get_connection()
     universe_df = pd.DataFrame(ASSET_UNIVERSE)
     universe_symbols = sorted(universe_df["symbol"].unique().tolist())
 
