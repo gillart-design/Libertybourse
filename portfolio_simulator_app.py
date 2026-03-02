@@ -1693,7 +1693,9 @@ def create_allocation_chart(data: pd.DataFrame, label_col: str, value_col: str, 
 # MAIN
 # =========================
 def main() -> None:
+    st.set_page_config(page_title=APP_TITLE, page_icon="📈", layout="wide")
     setup_logger()
+    render_css()
 
     # ✅ DOIT ÊTRE LE PREMIER CALL streamlit !
     st.set_page_config(page_title=APP_TITLE, page_icon="📈", layout="wide")
