@@ -1149,7 +1149,8 @@ def compute_drawdown_pct(snapshots: pd.DataFrame) -> float:
 # =========================
 # Risk checks
 # =========================
-def check_trade_risk(
+def check_trade_risk(if holdings is None or holdings.empty or "symbol" not in holdings.columns:
+    holdings = pd.DataFrame(columns=["symbol", "zone", "secteur", "valeur_marche"])
     side: str,
     symbol: str,
     quantity: float,
