@@ -1104,6 +1104,15 @@ def compute_portfolio_state(
         )
 
     holdings = pd.DataFrame(rows)
+
+# ✅ FIX: si portefeuille vide, garantir les colonnes attendues
+if holdings.empty:
+    holdings = pd.DataFrame(columns=[
+        "symbol","nom","zone","secteur","type",
+        "quantite","prix_moyen","cours","devise","fx_to_base",
+        "valeur_marche","valeur_marche_devise","pnl_latent","pnl_realise",
+        "dividend_yield"
+    ])
     invested = float(holdings["valeur_marche"].sum()) if not holdings.empty else 0.0
     annual_dividends = float((holdings["valeur_marche"] * holdings["dividend_yield"]).sum()) if not holdings.empty else 0.0
 
