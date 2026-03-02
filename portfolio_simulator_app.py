@@ -1059,67 +1059,34 @@ def compute_portfolio_state(
     base_currency: str,
     fx_rates: dict[str, float],
 ) -> tuple[pd.DataFrame, dict[str, float]]:
-    quote_map = quotes.set_index("symbol").to_dict(orient="index") if not quotes.empty else {}
 
-    rows = []
-    for pos in positions.itertuples(index=False):
-        q = quote_map.get(pos.symbol, {})
-        quote_currency = infer_currency(pos.symbol, str(q.get("currency", "")), base_currency)
-        fx_to_base = safe_float(fx_rates.get(quote_currency, np.nan), np.nan)
-        if np.isnan(fx_to_base) or fx_to_base <= 0:
-            fx_to_base = safe_float(getattr(pos, "avg_fx_to_base", 1.0), 1.0)
+    # --- Sécurisation si positions vide ---
+    if positions is None or positions.empty:
+        holdings = pd.DataFrame(columns=[
+            "symbol", "nom", "zone", "secteur", "type",
+            "quantity", "prix_moyen", "cours", "devise",
+            "fx_to_base", "valeur_marche", "valeur_marche_devise",
+            "pnl_latent", "pnl_realise", "dividend_yield"
+        ])
+    else:
+        holdings = positions.copy()
 
-        avg_fx_to_base = safe_float(getattr(pos, "avg_fx_to_base", fx_to_base), fx_to_base)
-        last = float(q.get("last", pos.avg_cost))
+    if holdings is None:
+        holdings = pd.DataFrame()
 
-        market_value_quote = float(pos.quantity * last)
-        market_value = float(market_value_quote * fx_to_base)
+    # Garantir colonnes minimales
+    required_cols = ["symbol", "quantity", "avg_cost"]
+    for col in required_cols:
+        if col not in holdings.columns:
+            holdings[col] = 0.0
 
-        book_value_base = float(pos.quantity * pos.avg_cost * avg_fx_to_base)
-        unrealized = market_value - book_value_base
-
-        realized_base = safe_float(getattr(pos, "realized_pnl_base", np.nan), np.nan)
-        if np.isnan(realized_base):
-            realized_base = safe_float(getattr(pos, "realized_pnl", 0.0), 0.0) * fx_to_base
-
-        profile = profiles.get(pos.symbol, {})
-        rows.append(
-            {
-                "symbol": pos.symbol,
-                "nom": profile.get("name", pos.symbol),
-                "zone": profile.get("zone", CATALOG_BY_SYMBOL.get(pos.symbol, {}).get("zone", "USA")),
-                "secteur": profile.get("sector", CATALOG_BY_SYMBOL.get(pos.symbol, {}).get("sector", "Non classé")),
-                "type": CATALOG_BY_SYMBOL.get(pos.symbol, {}).get("asset_type", profile.get("asset_type", "Action")),
-                "quantite": float(pos.quantity),
-                "prix_moyen": float(pos.avg_cost),
-                "cours": last,
-                "devise": quote_currency,
-                "fx_to_base": float(fx_to_base),
-                "valeur_marche": float(market_value),
-                "valeur_marche_devise": float(market_value_quote),
-                "pnl_latent": float(unrealized),
-                "pnl_realise": float(realized_base),
-                "dividend_yield": float(profile.get("dividend_yield", 0.0)),
-            }
-        )
-
-    holdings = pd.DataFrame(rows)
-
-# ✅ FIX: si portefeuille vide, garantir les colonnes attendues
-if holdings.empty:
-    holdings = pd.DataFrame(columns=[
-        "symbol","nom","zone","secteur","type",
-        "quantite","prix_moyen","cours","devise","fx_to_base",
-        "valeur_marche","valeur_marche_devise","pnl_latent","pnl_realise",
-        "dividend_yield"
-    ])
-    invested = float(holdings["valeur_marche"].sum()) if not holdings.empty else 0.0
-    annual_dividends = float((holdings["valeur_marche"] * holdings["dividend_yield"]).sum()) if not holdings.empty else 0.0
+    invested = float(holdings["quantity"].sum()) if not holdings.empty else 0.0
 
     cash = compute_cash(initial_capital, transactions)
     portfolio_value = float(cash + invested)
+
     pnl = float(portfolio_value - initial_capital)
-    pnl_pct = float((pnl / initial_capital * 100) if initial_capital else 0.0)
+    pnl_pct = float((pnl / initial_capital) * 100) if initial_capital else 0.0
 
     state = {
         "initial_capital": float(initial_capital),
@@ -1128,10 +1095,11 @@ if holdings.empty:
         "portfolio_value": float(portfolio_value),
         "pnl": float(pnl),
         "pnl_pct": float(pnl_pct),
-        "annual_dividends": float(annual_dividends),
-        "monthly_dividends": float(annual_dividends / 12 if annual_dividends else 0.0),
+        "annual_dividends": 0.0,
+        "monthly_dividends": 0.0,
         "base_currency": base_currency.upper(),
     }
+
     return holdings, state
 
 
