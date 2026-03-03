@@ -2185,19 +2185,35 @@ def render_css() -> None:
         """
         <style>
         :root {
-            --brand-blue:#0f2f79;
-            --brand-green:#16a34a;
-            --soft-bg:#f2f5fb;
+            --navy-950:#041022;
+            --navy-900:#071733;
+            --navy-850:#0b2454;
+            --navy-800:#0f2f79;
+            --navy-700:#1a4aa5;
+            --surface:#ffffff;
+            --surface-soft:#f3f7ff;
+            --line-soft:#cfdcf2;
+            --text-main:#102a5c;
+            --text-muted:#4f6388;
+            --gain:#0f9d58;
+            --loss:#d93025;
             --card-radius:20px;
+        }
+        div[data-testid="stStatusWidget"] {
+            display: none !important;
         }
         .stApp {
             background:
-                radial-gradient(circle at 10% 10%, rgba(26, 73, 165, 0.06), transparent 32%),
-                radial-gradient(circle at 80% 15%, rgba(22, 163, 74, 0.05), transparent 30%),
-                linear-gradient(180deg, #f7f9fc 0%, #eef3fb 100%);
+                radial-gradient(circle at 12% 8%, rgba(17, 73, 170, 0.08), transparent 36%),
+                linear-gradient(180deg, #f9fbff 0%, #edf3ff 100%);
+            color: var(--text-main);
+        }
+        header[data-testid="stHeader"] {
+            background: linear-gradient(180deg, var(--navy-900) 0%, var(--navy-950) 100%);
+            border-bottom: 1px solid #123a82;
         }
         section[data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #020f2a 0%, #031335 100%);
+            background: linear-gradient(180deg, #030f25 0%, #06173a 100%);
             border-right: 1px solid rgba(148, 163, 184, 0.25);
         }
         section[data-testid="stSidebar"] * {
@@ -2227,14 +2243,32 @@ def render_css() -> None:
             border: 1px solid #2f65d2 !important;
             color: #f7faff !important;
         }
+        section[data-testid="stSidebar"] .stButton > button:hover {
+            filter: brightness(1.05);
+        }
         section[data-testid="stSidebar"] [data-baseweb="slider"] div[role="slider"] {
             background: #2a66d4 !important;
             border-color: #2a66d4 !important;
         }
+        button[data-baseweb="tab"] {
+            color: #213d71 !important;
+        }
+        button[data-baseweb="tab"][aria-selected="true"] {
+            color: var(--navy-850) !important;
+            border-bottom: 2px solid var(--navy-850) !important;
+        }
+        div[data-testid="stDataFrame"] {
+            background: var(--surface) !important;
+            border: 1px solid var(--line-soft);
+            border-radius: 14px;
+        }
+        div[data-testid="stDataFrame"] * {
+            color: var(--text-main) !important;
+        }
         .backtest-panel {
-            border: 2px solid #c9d7ef;
+            border: 2px solid #d2ddf2;
             border-radius: 16px;
-            background: white;
+            background: var(--surface);
             padding: 0.9rem 1rem 0.4rem 1rem;
             box-shadow: 0 8px 24px rgba(20, 42, 90, 0.08);
             margin-top: 0.8rem;
@@ -2257,17 +2291,17 @@ def render_css() -> None:
             margin-bottom: 1rem;
         }
         .metric-card {
-            border: 2px solid #d7deea;
+            border: 2px solid #d4e0f5;
             border-radius: var(--card-radius);
             padding: 1rem 1.1rem;
-            background: white;
+            background: var(--surface);
             box-shadow: 0 8px 24px rgba(20, 42, 90, 0.08);
             min-height: 170px;
         }
         .metric-card.primary {
-            background: linear-gradient(160deg, #0f2f79 0%, #1a3f95 100%);
+            background: linear-gradient(160deg, var(--navy-850) 0%, var(--navy-800) 100%);
             color: white;
-            border-color: #0f2f79;
+            border-color: var(--navy-850);
         }
         .metric-title {
             font-size: 1.05rem;
@@ -2294,13 +2328,158 @@ def render_css() -> None:
             border-radius: 999px;
             font-size: 0.8rem;
             font-weight: 700;
+        }
+        .event-pill.gain {
             background: #dcfce7;
             color: #166534;
+        }
+        .event-pill.loss {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .event-pill.neutral {
+            background: #e3ebfa;
+            color: #1e3a8a;
+        }
+        .lc-refresh-overlay {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(248, 251, 255, 0.70);
+            backdrop-filter: blur(1px);
+            opacity: 0;
+            pointer-events: none;
+            z-index: 999999;
+            animation: lcOverlayFade 1.25s ease forwards;
+        }
+        .lc-refresh-badge {
+            width: 108px;
+            height: 108px;
+            border-radius: 999px;
+            background: #ffffff;
+            border: 2px solid #d7e3f8;
+            box-shadow: 0 18px 40px rgba(7, 23, 51, .22);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: lcPulse 1s ease-in-out infinite;
+        }
+        .lc-refresh-badge img {
+            width: 72px;
+            height: 72px;
+            object-fit: contain;
+            animation: lcFloat .95s ease-in-out infinite;
+        }
+        @keyframes lcOverlayFade {
+            0% { opacity: 0; }
+            12% { opacity: 1; }
+            78% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        @keyframes lcPulse {
+            0%,100% { transform: scale(1.0); box-shadow: 0 14px 34px rgba(7,23,51,.20); }
+            50% { transform: scale(1.05); box-shadow: 0 22px 44px rgba(7,23,51,.27); }
+        }
+        @keyframes lcFloat {
+            0%,100% { transform: translateY(0px); }
+            50% { transform: translateY(-4px); }
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _fallback_logo_svg() -> str:
+    return """
+    <svg xmlns="http://www.w3.org/2000/svg" width="220" height="220" viewBox="0 0 220 220">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#2f7fd0"/>
+          <stop offset="100%" stop-color="#123f8f"/>
+        </linearGradient>
+      </defs>
+      <circle cx="110" cy="110" r="104" fill="url(#g)"/>
+      <path d="M160 84c-6-11-16-18-30-20-13-2-24 1-35 9-9 7-15 16-19 27-4 11-3 22 2 33 5 10 13 17 24 21 12 4 23 3 34-2 8-4 15-10 20-18l17 10-10-25 26-1-29-14z" fill="#fff"/>
+      <text x="110" y="196" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#ffffff">LC</text>
+    </svg>
+    """.strip()
+
+
+@st.cache_data(show_spinner=False)
+def get_refresh_logo_data_uri() -> str:
+    candidates = [
+        Path("assets/liberty_capital_logo.png"),
+        Path("assets/liberty-capital-logo.png"),
+        Path("screenshots/liberty_capital_logo.png"),
+        Path("screenshots/liberty-capital-logo.png"),
+        Path("output/liberty_capital_logo.png"),
+        Path("output/liberty-capital-logo.png"),
+    ]
+    mime_by_ext = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".svg": "image/svg+xml"}
+    for logo_path in candidates:
+        if not logo_path.exists():
+            continue
+        ext = logo_path.suffix.lower()
+        mime = mime_by_ext.get(ext, "image/png")
+        payload = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+        return f"data:{mime};base64,{payload}"
+    fallback_svg = _fallback_logo_svg().encode("utf-8")
+    payload = base64.b64encode(fallback_svg).decode("ascii")
+    return f"data:image/svg+xml;base64,{payload}"
+
+
+def render_refresh_logo_animation(visible: bool) -> None:
+    if not visible:
+        return
+    logo = get_refresh_logo_data_uri()
+    st.markdown(
+        f"""
+        <div class="lc-refresh-overlay">
+            <div class="lc-refresh-badge">
+                <img src="{logo}" alt="Liberty Capital"/>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def apply_plot_theme(
+    fig: go.Figure,
+    *,
+    title: str,
+    xaxis_title: str | None = None,
+    yaxis_title: str | None = None,
+    margin_top: int = 48,
+) -> go.Figure:
+    fig.update_layout(
+        title=title,
+        template=None,
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#ffffff",
+        font={"color": "#102a5c"},
+        colorway=["#103b88", "#1f5cb5", "#0f9d58", "#d93025", "#6d83aa"],
+        legend={"bgcolor": "rgba(255,255,255,0.85)", "bordercolor": "#d7e3f8", "borderwidth": 1},
+        margin={"l": 20, "r": 20, "t": margin_top, "b": 20},
+    )
+    fig.update_xaxes(
+        title=xaxis_title,
+        showgrid=True,
+        gridcolor="#dbe5f5",
+        linecolor="#bfd0ea",
+        zeroline=False,
+    )
+    fig.update_yaxes(
+        title=yaxis_title,
+        showgrid=True,
+        gridcolor="#dbe5f5",
+        linecolor="#bfd0ea",
+        zeroline=False,
+    )
+    return fig
 
 
 def render_metric_card(
@@ -2311,7 +2490,14 @@ def render_metric_card(
     badge: str | None = None,
 ) -> None:
     card_class = "metric-card primary" if primary else "metric-card"
-    badge_html = f"<div class='event-pill'>{badge}</div>" if badge else ""
+    badge_class = "neutral"
+    if badge:
+        raw = str(badge).strip()
+        if raw.startswith("-"):
+            badge_class = "loss"
+        elif raw.startswith("+"):
+            badge_class = "gain"
+    badge_html = f"<div class='event-pill {badge_class}'>{badge}</div>" if badge else ""
     st.markdown(
         f"""
         <div class="{card_class}">
@@ -2328,7 +2514,7 @@ def render_metric_card(
 def create_evolution_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go.Figure:
     fig = go.Figure()
     if snapshots.empty:
-        fig.update_layout(title="Aucun snapshot disponible")
+        apply_plot_theme(fig, title="Aucun snapshot disponible")
         return fig
     points = snapshots.copy()
     points["captured_local"] = pd.to_datetime(points["captured_at_utc"], utc=True).dt.tz_convert(DISPLAY_TZ)
@@ -2337,7 +2523,7 @@ def create_evolution_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go
             x=points["captured_local"],
             y=points["portfolio_value"],
             mode="lines",
-            line={"color": "#1d4ed8", "width": 3},
+            line={"color": "#103b88", "width": 3},
             name="Capital total",
         )
     )
@@ -2351,19 +2537,19 @@ def create_evolution_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go
                 marker={
                     "size": 9,
                     "color": [EVENT_COLORS.get(v, "#6b7280") for v in marks["event_type"]],
-                    "line": {"color": "white", "width": 1},
+                    "line": {"color": "#ffffff", "width": 1},
                 },
                 text=marks["event_label"].fillna(marks["event_type"]),
                 hovertemplate=f"%{{x|%d/%m/%Y %H:%M}}<br>%{{y:.2f}} {currency}<br>%{{text}}<extra></extra>",
                 name="Événements",
             )
         )
-    fig.update_layout(
+    apply_plot_theme(
+        fig,
         title="Évolution du portefeuille (snapshots achats/ventes/hausses/baisses)",
-        yaxis_title=f"Valeur ({currency})",
         xaxis_title="Date",
-        template="plotly_white",
-        margin={"l": 20, "r": 20, "t": 50, "b": 20},
+        yaxis_title=f"Valeur ({currency})",
+        margin_top=50,
     )
     return fig
 
@@ -2371,7 +2557,7 @@ def create_evolution_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go
 def create_allocation_chart(data: pd.DataFrame, label_col: str, value_col: str, title: str) -> go.Figure:
     if data.empty or float(data[value_col].sum()) <= 0:
         fig = go.Figure()
-        fig.update_layout(title=f"{title} (vide)")
+        apply_plot_theme(fig, title=f"{title} (vide)")
         return fig
     fig = px.pie(
         data,
@@ -2379,17 +2565,21 @@ def create_allocation_chart(data: pd.DataFrame, label_col: str, value_col: str, 
         values=value_col,
         hole=0.55,
         title=title,
-        color_discrete_sequence=px.colors.qualitative.Set2,
+        color_discrete_sequence=["#103b88", "#1d4fa6", "#2f6ccc", "#6c8ec4", "#0f9d58", "#d93025", "#869dc2"],
     )
-    fig.update_traces(textposition="inside", textinfo="percent+label")
-    fig.update_layout(margin={"l": 20, "r": 20, "t": 55, "b": 20})
+    fig.update_traces(
+        textposition="inside",
+        textinfo="percent+label",
+        marker={"line": {"color": "#ffffff", "width": 1}},
+    )
+    apply_plot_theme(fig, title=title, margin_top=55)
     return fig
 
 
 def create_drawdown_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go.Figure:
     fig = go.Figure()
     if snapshots.empty:
-        fig.update_layout(title="Drawdown indisponible")
+        apply_plot_theme(fig, title="Drawdown indisponible")
         return fig
     pts = snapshots.copy()
     pts["captured_local"] = pd.to_datetime(pts["captured_at_utc"], utc=True).dt.tz_convert(DISPLAY_TZ)
@@ -2397,14 +2587,14 @@ def create_drawdown_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go.
     peak = values.cummax()
     drawdown = (values / peak - 1.0) * 100
     fig.add_trace(go.Scatter(x=pts["captured_local"], y=drawdown, mode="lines", line={"color": "#dc2626", "width": 2}))
-    fig.update_layout(
+    apply_plot_theme(
+        fig,
         title="Drawdown portefeuille",
-        yaxis_title="Drawdown %",
         xaxis_title="Date",
-        template="plotly_white",
-        margin={"l": 20, "r": 20, "t": 45, "b": 20},
+        yaxis_title="Drawdown %",
+        margin_top=45,
     )
-    fig.add_hline(y=0, line={"color": "#94a3b8", "dash": "dot"})
+    fig.add_hline(y=0, line={"color": "#6d83aa", "dash": "dot"})
     return fig
 
 
@@ -2432,41 +2622,57 @@ def create_pnl_contribution_chart(holdings: pd.DataFrame, transactions: pd.DataF
     h["net_total"] = h["latent"] + h["realized_live"] + h["fees"]
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=h["symbol"], y=h["latent"], name="PnL latent"))
-    fig.add_trace(go.Bar(x=h["symbol"], y=h["realized_live"], name="PnL réalisé live"))
-    fig.add_trace(go.Bar(x=h["symbol"], y=h["fx_effect"], name="Effet FX"))
-    fig.add_trace(go.Bar(x=h["symbol"], y=h["fees"], name="Frais"))
-    fig.update_layout(
+    fig.add_trace(go.Bar(x=h["symbol"], y=h["latent"], name="PnL latent", marker={"color": "#1d4fa6"}))
+    fig.add_trace(go.Bar(x=h["symbol"], y=h["realized_live"], name="PnL réalisé live", marker={"color": "#0f9d58"}))
+    fig.add_trace(go.Bar(x=h["symbol"], y=h["fx_effect"], name="Effet FX", marker={"color": "#6c8ec4"}))
+    fig.add_trace(go.Bar(x=h["symbol"], y=h["fees"], name="Frais", marker={"color": "#d93025"}))
+    apply_plot_theme(
+        fig,
         title=f"Contribution PnL par actif ({base_currency})",
-        barmode="relative",
-        template="plotly_white",
         xaxis_title="Actif",
         yaxis_title=f"Contribution ({base_currency})",
-        margin={"l": 20, "r": 20, "t": 45, "b": 20},
+        margin_top=45,
     )
+    fig.update_layout(barmode="relative")
     return fig
 
 
 def create_benchmark_relative_chart(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     if df is None or df.empty or "date" not in df.columns:
-        fig.update_layout(title="Benchmark vs portefeuille indisponible")
+        apply_plot_theme(fig, title="Benchmark vs portefeuille indisponible")
         return fig
     x = pd.to_datetime(df["date"], errors="coerce")
     if "equity" in df.columns:
         s = pd.to_numeric(df["equity"], errors="coerce")
         if not s.dropna().empty:
-            fig.add_trace(go.Scatter(x=x, y=s / s.dropna().iloc[0] * 100, mode="lines", name="Portefeuille (base 100)"))
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=s / s.dropna().iloc[0] * 100,
+                    mode="lines",
+                    name="Portefeuille (base 100)",
+                    line={"color": "#103b88", "width": 2.6},
+                )
+            )
     if "benchmark_equity" in df.columns:
         b = pd.to_numeric(df["benchmark_equity"], errors="coerce")
         if not b.dropna().empty:
-            fig.add_trace(go.Scatter(x=x, y=b / b.dropna().iloc[0] * 100, mode="lines", name="Benchmark (base 100)"))
-    fig.update_layout(
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=b / b.dropna().iloc[0] * 100,
+                    mode="lines",
+                    name="Benchmark (base 100)",
+                    line={"color": "#d93025", "width": 2.1, "dash": "dot"},
+                )
+            )
+    apply_plot_theme(
+        fig,
         title="Performance relative vs benchmark",
-        template="plotly_white",
-        yaxis_title="Base 100",
         xaxis_title="Date",
-        margin={"l": 20, "r": 20, "t": 45, "b": 20},
+        yaxis_title="Base 100",
+        margin_top=45,
     )
     return fig
 
@@ -3147,6 +3353,8 @@ def main() -> None:
         st.session_state["backtest_slippage_bps"] = get_setting_float(conn, "backtest_slippage_bps", 5.0)
     if "quote_error_cache" not in st.session_state:
         st.session_state["quote_error_cache"] = {}
+    if "last_autorefresh_count" not in st.session_state:
+        st.session_state["last_autorefresh_count"] = -1
 
     st.markdown(f"<div class='main-title'>{APP_TITLE}</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='subtitle'>{APP_SUBTITLE}</div>", unsafe_allow_html=True)
@@ -3363,8 +3571,13 @@ def main() -> None:
         set_setting(conn, "alert_email_to", alert_email_to.strip())
         st.caption(f"Les transactions et snapshots sont persistés dans `{db_path.as_posix()}`.")
 
+    show_refresh_logo = False
     if st.session_state["live_enabled"] and st_autorefresh is not None:
-        st_autorefresh(interval=int(st.session_state["refresh_seconds"]) * 1000, key="portfolio-live-refresh")
+        refresh_count = st_autorefresh(interval=int(st.session_state["refresh_seconds"]) * 1000, key="portfolio-live-refresh")
+        prev_count = int(st.session_state.get("last_autorefresh_count", -1))
+        show_refresh_logo = refresh_count > 0 and refresh_count != prev_count
+        st.session_state["last_autorefresh_count"] = int(refresh_count)
+    render_refresh_logo_animation(show_refresh_logo)
 
     transactions = load_transactions(conn)
     positions_raw = compute_positions(transactions, accounting_method=st.session_state["accounting_method"])
