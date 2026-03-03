@@ -2209,6 +2209,11 @@ def render_css() -> None:
         div[data-testid="stStatusWidget"] {
             display: none !important;
         }
+        div[data-testid="stSpinner"],
+        div[data-testid="stLoadingSpinner"],
+        div[data-testid="stAppSkeleton"] {
+            display: none !important;
+        }
         .stApp {
             background:
                 radial-gradient(circle at 12% 8%, rgba(17, 73, 170, 0.08), transparent 36%),
@@ -2257,12 +2262,73 @@ def render_css() -> None:
             background: #2a66d4 !important;
             border-color: #2a66d4 !important;
         }
+        div[data-testid="stAppViewContainer"] .stNumberInput input,
+        div[data-testid="stAppViewContainer"] .stTextInput input,
+        div[data-testid="stAppViewContainer"] .stTextArea textarea,
+        div[data-testid="stAppViewContainer"] .stDateInput input,
+        div[data-testid="stAppViewContainer"] .stSelectbox div[data-baseweb="select"] {
+            background: #ffffff !important;
+            border: 1px solid #c6d7f3 !important;
+            color: #102a5c !important;
+        }
+        div[data-testid="stAppViewContainer"] [data-baseweb="tag"] {
+            background: #eaf2ff !important;
+            border: 1px solid #bfd3f5 !important;
+            color: #14386f !important;
+        }
+        div[data-testid="stAppViewContainer"] [data-baseweb="tag"] span {
+            color: #14386f !important;
+        }
+        div[data-testid="stAppViewContainer"] .stButton > button {
+            background: linear-gradient(160deg, #0f2f79 0%, #15479b 100%) !important;
+            border: 1px solid #1f55b1 !important;
+            color: #ffffff !important;
+        }
+        div[data-testid="stAppViewContainer"] .stButton > button:hover {
+            filter: brightness(1.06);
+        }
+        div[data-testid="stAppViewContainer"] [data-baseweb="slider"] div[role="slider"] {
+            background: #0f2f79 !important;
+            border-color: #0f2f79 !important;
+        }
+        div[data-testid="stAppViewContainer"] .stExpander {
+            background: #ffffff;
+            border: 1px solid #ccdbf3;
+            border-radius: 12px;
+        }
+        div[data-testid="stAppViewContainer"] .stExpander summary {
+            color: #102a5c !important;
+            font-weight: 700;
+        }
+        .stApp {
+            --gdg-bg-cell: #ffffff;
+            --gdg-bg-header: #edf4ff;
+            --gdg-bg-row-hover: #eef4ff;
+            --gdg-bg-odd: #f8fbff;
+            --gdg-text-dark: #102a5c;
+            --gdg-horizontal-border-color: #d7e3f8;
+            --gdg-vertical-border-color: #d7e3f8;
+            --gdg-header-font-style: 700 13px "Source Sans Pro", sans-serif;
+        }
         button[data-baseweb="tab"] {
             color: #213d71 !important;
         }
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+            gap: .25rem;
+            border-bottom: 1px solid #c7d5ef;
+            padding-bottom: .15rem;
+        }
+        div[data-testid="stTabs"] [data-baseweb="tab"] {
+            background: #eef4ff;
+            border: 1px solid #cfddf6;
+            border-radius: 10px 10px 0 0;
+            padding: .35rem .85rem;
+        }
         button[data-baseweb="tab"][aria-selected="true"] {
             color: var(--navy-850) !important;
-            border-bottom: 2px solid var(--navy-850) !important;
+            background: #ffffff !important;
+            border: 1px solid #b9cff1 !important;
+            border-bottom: 2px solid #d93025 !important;
         }
         div[data-testid="stDataFrame"] {
             background: var(--surface) !important;
@@ -2350,39 +2416,41 @@ def render_css() -> None:
         }
         .lc-refresh-overlay {
             position: fixed;
-            inset: 0;
+            top: 86px;
+            right: 24px;
+            width: 92px;
+            height: 92px;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: rgba(248, 251, 255, 0.70);
-            backdrop-filter: blur(1px);
+            background: transparent;
             opacity: 0;
             pointer-events: none;
             z-index: 999999;
-            animation: lcOverlayFade 1.25s ease forwards;
+            animation: lcOverlayFade 1.15s ease forwards;
         }
         .lc-refresh-badge {
-            width: 108px;
-            height: 108px;
+            width: 78px;
+            height: 78px;
             border-radius: 999px;
-            background: #ffffff;
-            border: 2px solid #d7e3f8;
-            box-shadow: 0 18px 40px rgba(7, 23, 51, .22);
+            background: rgba(255, 255, 255, 0.97);
+            border: 2px solid #ceddf6;
+            box-shadow: 0 12px 30px rgba(7, 23, 51, .2);
             display: flex;
             align-items: center;
             justify-content: center;
-            animation: lcPulse 1s ease-in-out infinite;
+            animation: lcPulse 0.9s ease-in-out infinite;
         }
         .lc-refresh-badge img {
-            width: 72px;
-            height: 72px;
+            width: 54px;
+            height: 54px;
             object-fit: contain;
-            animation: lcFloat .95s ease-in-out infinite;
+            animation: lcFloat .9s ease-in-out infinite;
         }
         @keyframes lcOverlayFade {
             0% { opacity: 0; }
-            12% { opacity: 1; }
-            78% { opacity: 1; }
+            20% { opacity: 1; }
+            65% { opacity: 1; }
             100% { opacity: 0; }
         }
         @keyframes lcPulse {
@@ -2572,7 +2640,17 @@ def create_allocation_chart(data: pd.DataFrame, label_col: str, value_col: str, 
         values=value_col,
         hole=0.55,
         title=title,
-        color_discrete_sequence=["#103b88", "#1d4fa6", "#2f6ccc", "#6c8ec4", "#0f9d58", "#d93025", "#869dc2"],
+        color_discrete_sequence=[
+            "#0f9d58",
+            "#d93025",
+            "#1a4aa5",
+            "#16a34a",
+            "#ef4444",
+            "#2f6ccc",
+            "#22c55e",
+            "#b91c1c",
+            "#6c8ec4",
+        ],
     )
     fig.update_traces(
         textposition="inside",
@@ -2593,7 +2671,28 @@ def create_drawdown_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go.
     values = pd.to_numeric(pts["portfolio_value"], errors="coerce")
     peak = values.cummax()
     drawdown = (values / peak - 1.0) * 100
-    fig.add_trace(go.Scatter(x=pts["captured_local"], y=drawdown, mode="lines", line={"color": "#dc2626", "width": 2}))
+    fig.add_trace(
+        go.Scatter(
+            x=pts["captured_local"],
+            y=drawdown,
+            mode="lines",
+            line={"color": "#dc2626", "width": 2.4},
+            fill="tozeroy",
+            fillcolor="rgba(217,48,37,0.20)",
+            name="Drawdown",
+        )
+    )
+    recovery = drawdown.where(drawdown > -1.0, np.nan)
+    if not recovery.dropna().empty:
+        fig.add_trace(
+            go.Scatter(
+                x=pts["captured_local"],
+                y=recovery,
+                mode="lines",
+                line={"color": "#0f9d58", "width": 2.0},
+                name="Zone récupération",
+            )
+        )
     apply_plot_theme(
         fig,
         title="Drawdown portefeuille",
@@ -2629,10 +2728,14 @@ def create_pnl_contribution_chart(holdings: pd.DataFrame, transactions: pd.DataF
     h["net_total"] = h["latent"] + h["realized_live"] + h["fees"]
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=h["symbol"], y=h["latent"], name="PnL latent", marker={"color": "#1d4fa6"}))
-    fig.add_trace(go.Bar(x=h["symbol"], y=h["realized_live"], name="PnL réalisé live", marker={"color": "#0f9d58"}))
-    fig.add_trace(go.Bar(x=h["symbol"], y=h["fx_effect"], name="Effet FX", marker={"color": "#6c8ec4"}))
-    fig.add_trace(go.Bar(x=h["symbol"], y=h["fees"], name="Frais", marker={"color": "#d93025"}))
+    latent_color = h["latent"].map(lambda v: "#16a34a" if safe_float(v, 0.0) >= 0 else "#dc2626").tolist()
+    realized_color = h["realized_live"].map(lambda v: "#0f9d58" if safe_float(v, 0.0) >= 0 else "#ef4444").tolist()
+    fx_color = h["fx_effect"].map(lambda v: "#22c55e" if safe_float(v, 0.0) >= 0 else "#f87171").tolist()
+    fee_color = ["#b91c1c"] * len(h)
+    fig.add_trace(go.Bar(x=h["symbol"], y=h["latent"], name="PnL latent", marker={"color": latent_color}))
+    fig.add_trace(go.Bar(x=h["symbol"], y=h["realized_live"], name="PnL réalisé live", marker={"color": realized_color}))
+    fig.add_trace(go.Bar(x=h["symbol"], y=h["fx_effect"], name="Effet FX", marker={"color": fx_color}))
+    fig.add_trace(go.Bar(x=h["symbol"], y=h["fees"], name="Frais", marker={"color": fee_color}))
     apply_plot_theme(
         fig,
         title=f"Contribution PnL par actif ({base_currency})",
@@ -3034,6 +3137,19 @@ def parse_curve_json(curve_json: str | None) -> pd.DataFrame:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df = df.dropna(subset=["date"])
     return df
+
+
+def dataframe_records_json_safe(df: pd.DataFrame) -> list[dict]:
+    if df is None or df.empty:
+        return []
+    out = df.copy()
+    for col in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[col]):
+            ts = pd.to_datetime(out[col], errors="coerce", utc=True)
+            out[col] = ts.dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = out.replace([np.inf, -np.inf], np.nan)
+    out = out.where(pd.notna(out), None)
+    return out.to_dict(orient="records")
 
 
 def build_rebalance_plan(
@@ -4333,6 +4449,7 @@ def main() -> None:
                 if curve.empty:
                     st.error("Backtest indisponible (données manquantes).")
                 else:
+                    curve_records = dataframe_records_json_safe(curve)
                     cursor = conn.execute(
                         """
                         INSERT INTO backtest_runs(
@@ -4348,7 +4465,7 @@ def main() -> None:
                             str(bt_end),
                             float(bt_capital),
                             json.dumps(metrics, ensure_ascii=False),
-                            json.dumps(curve.to_dict(orient="records"), ensure_ascii=False),
+                            json.dumps(curve_records, ensure_ascii=False),
                             bt_benchmark,
                         ),
                     )
@@ -4371,7 +4488,7 @@ def main() -> None:
                         "symbols_csv": symbols_to_csv(bt_symbols or st.session_state["realtime_symbols"]),
                         "initial_capital": float(bt_capital),
                         "metrics": metrics,
-                        "curve": curve.to_dict(orient="records"),
+                        "curve": curve_records,
                         "benchmark": bt_benchmark,
                         "exchange": bt_exchange,
                         "currency": state["base_currency"],
