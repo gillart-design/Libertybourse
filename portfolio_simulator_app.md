@@ -3304,18 +3304,33 @@ def check_trade_risk(
     max_zone_pct: float,
 ) -> list[str]:
     errors: list[str] = []
+    # Normalise un portefeuille vide/partiel pour éviter les KeyError
+    # (cas fréquent avant la première transaction).
+    if isinstance(holdings, pd.DataFrame):
+        holdings_norm = holdings.copy()
+    else:
+        holdings_norm = pd.DataFrame()
+    for col, default in (("symbol", ""), ("zone", "USA"), ("secteur", "Non classé"), ("valeur_marche", 0.0)):
+        if col not in holdings_norm.columns:
+            holdings_norm[col] = default
+    holdings_norm["symbol"] = holdings_norm["symbol"].astype(str)
+    holdings_norm["valeur_marche"] = pd.to_numeric(holdings_norm["valeur_marche"], errors="coerce").fillna(0.0)
+
     buy_cost_base = (quantity * price + fees) * fx_to_base
     sell_proceeds_base = max(quantity * price - fees, 0.0) * fx_to_base
-    current_value = float(holdings["valeur_marche"].sum()) if not holdings.empty else 0.0
+    current_value = float(holdings_norm["valeur_marche"].sum()) if not holdings_norm.empty else 0.0
     total_after = cash + current_value
     if side.upper() == "BUY":
         if cash < buy_cost_base:
             errors.append(f"Cash insuffisant: requis {money(buy_cost_base, base_currency)}, disponible {money(cash, base_currency)}.")
         projected_total = total_after
-        symbol_value = float(holdings.loc[holdings["symbol"] == symbol, "valeur_marche"].sum()) + buy_cost_base
+        symbol_value = float(holdings_norm.loc[holdings_norm["symbol"] == symbol, "valeur_marche"].sum()) + buy_cost_base
     else:
         projected_total = total_after
-        symbol_value = max(0.0, float(holdings.loc[holdings["symbol"] == symbol, "valeur_marche"].sum()) - sell_proceeds_base)
+        symbol_value = max(
+            0.0,
+            float(holdings_norm.loc[holdings_norm["symbol"] == symbol, "valeur_marche"].sum()) - sell_proceeds_base,
+        )
 
     if projected_total <= 0:
         return errors
@@ -3324,8 +3339,8 @@ def check_trade_risk(
     if line_pct > max_line_pct:
         errors.append(f"Limite ligne dépassée ({line_pct:.1f}% > {max_line_pct:.1f}%).")
 
-    if not holdings.empty:
-        tmp = holdings.copy()
+    if not holdings_norm.empty:
+        tmp = holdings_norm.copy()
         if symbol in tmp["symbol"].values:
             idx = tmp.index[tmp["symbol"] == symbol][0]
             current = float(tmp.loc[idx, "valeur_marche"])
