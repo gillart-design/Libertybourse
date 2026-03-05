@@ -500,7 +500,25 @@ def localize_dataframe_fr(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def render_dataframe_fr(data: pd.DataFrame, **kwargs) -> None:
-    st.dataframe(localize_dataframe_fr(data), **kwargs)
+    localized = localize_dataframe_fr(data)
+    try:
+        styled = localized.style.set_table_styles(
+            [
+                {"selector": "table", "props": [("background-color", "#ffffff"), ("color", "#102a5c")]},
+                {"selector": "th", "props": [("background-color", "#edf4ff"), ("color", "#102a5c"), ("font-weight", "700")]},
+                {"selector": "td", "props": [("background-color", "#ffffff"), ("color", "#102a5c")]},
+            ],
+            overwrite=False,
+        ).set_properties(
+            **{
+                "background-color": "#ffffff",
+                "color": "#102a5c",
+                "border-color": "#d7e3f8",
+            }
+        )
+        st.dataframe(styled, **kwargs)
+    except Exception:
+        st.dataframe(localized, **kwargs)
 
 
 def parse_symbols_csv(raw: str, allowed: set[str] | None = None) -> list[str]:
@@ -2504,6 +2522,22 @@ def render_css() -> None:
             color: #102a5c !important;
             font-weight: 700;
         }
+        div[data-testid="stAppViewContainer"] .block-container,
+        div[data-testid="stAppViewContainer"] .block-container h1,
+        div[data-testid="stAppViewContainer"] .block-container h2,
+        div[data-testid="stAppViewContainer"] .block-container h3,
+        div[data-testid="stAppViewContainer"] .block-container h4,
+        div[data-testid="stAppViewContainer"] .block-container h5,
+        div[data-testid="stAppViewContainer"] .block-container h6,
+        div[data-testid="stAppViewContainer"] .block-container p,
+        div[data-testid="stAppViewContainer"] .block-container li,
+        div[data-testid="stAppViewContainer"] .block-container strong,
+        div[data-testid="stAppViewContainer"] .block-container em,
+        div[data-testid="stAppViewContainer"] .block-container label,
+        div[data-testid="stAppViewContainer"] .block-container small,
+        div[data-testid="stAppViewContainer"] .block-container code {
+            color: #102a5c !important;
+        }
         .stApp {
             --gdg-bg-cell: #ffffff;
             --gdg-bg-cell-medium: #f7faff;
@@ -2574,6 +2608,56 @@ def render_css() -> None:
             color: var(--text-main) !important;
         }
         div[data-testid="stDataFrame"] canvas {
+            background: #ffffff !important;
+        }
+        div[data-testid="stDataFrame"] [class*="glide"],
+        div[data-testid="stDataFrame"] [class*="glide-"],
+        div[data-testid="stDataFrame"] [class*="gdg"] {
+            background: #ffffff !important;
+            color: #102a5c !important;
+        }
+        div[data-testid="stDataFrame"] [class*="header"] {
+            background: #edf4ff !important;
+            color: #102a5c !important;
+        }
+        div[data-testid="stMarkdownContainer"] table {
+            background: #ffffff !important;
+            color: #102a5c !important;
+            border-collapse: collapse !important;
+            width: 100%;
+        }
+        div[data-testid="stMarkdownContainer"] table th {
+            background: #edf4ff !important;
+            color: #102a5c !important;
+            border: 1px solid #d7e3f8 !important;
+            font-weight: 700 !important;
+        }
+        div[data-testid="stMarkdownContainer"] table td {
+            background: #ffffff !important;
+            color: #102a5c !important;
+            border: 1px solid #d7e3f8 !important;
+        }
+        div[data-testid="stAppViewContainer"] [role="listbox"] {
+            background: #ffffff !important;
+            color: #102a5c !important;
+            border: 1px solid #c6d7f3 !important;
+        }
+        div[data-testid="stAppViewContainer"] [role="option"] {
+            background: #ffffff !important;
+            color: #102a5c !important;
+        }
+        div[data-testid="stAppViewContainer"] [role="option"][aria-selected="true"] {
+            background: #eaf2ff !important;
+            color: #0f2f79 !important;
+        }
+        div[data-testid="stPlotlyChart"] {
+            background: #ffffff !important;
+            border: 1px solid #d7e3f8;
+            border-radius: 14px;
+            padding: 0.2rem;
+        }
+        div[data-testid="stPlotlyChart"] .main-svg,
+        div[data-testid="stPlotlyChart"] .svg-container {
             background: #ffffff !important;
         }
         div[data-testid="stAppViewContainer"],
@@ -3265,6 +3349,296 @@ def render_positions_portefeuille(holdings: pd.DataFrame, base_currency: str, sp
         use_container_width=True,
         hide_index=True,
     )
+
+
+def resolve_quick_sell_quantity(
+    mode: str,
+    held_qty: float,
+    held_value_base: float,
+    unit_price_base: float,
+    qty_input: float,
+    amount_input: float,
+    pct_input: float,
+) -> tuple[float, str]:
+    qty_held = max(safe_float(held_qty, 0.0), 0.0)
+    if qty_held <= 0:
+        return 0.0, "Position vide."
+
+    mode_norm = str(mode).strip().lower()
+    target_qty = 0.0
+    if mode_norm == "position_totale":
+        target_qty = qty_held
+    elif mode_norm == "quantite":
+        target_qty = max(safe_float(qty_input, 0.0), 0.0)
+    elif mode_norm == "montant_base":
+        px_base = max(safe_float(unit_price_base, 0.0), 0.0)
+        amount = max(safe_float(amount_input, 0.0), 0.0)
+        if px_base <= 0:
+            return 0.0, "Prix en devise portefeuille indisponible."
+        target_qty = amount / px_base
+    elif mode_norm == "pourcentage":
+        pct_value = max(min(safe_float(pct_input, 0.0), 100.0), 0.0)
+        target_qty = qty_held * pct_value / 100.0
+    else:
+        return 0.0, "Mode de vente inconnu."
+
+    target_qty = max(target_qty, 0.0)
+    if target_qty > qty_held:
+        capped = qty_held
+        if mode_norm == "montant_base" and held_value_base > 0:
+            return capped, "Montant supérieur à la position: quantité ramenée à une vente totale."
+        return capped, "Quantité supérieure à la position: quantité ramenée au maximum disponible."
+    return target_qty, ""
+
+
+def render_quick_sell_panel(
+    *,
+    conn: sqlite3.Connection,
+    holdings: pd.DataFrame,
+    quotes: pd.DataFrame,
+    fx_rates: dict[str, float],
+    state: dict[str, float],
+    trade_slippage_bps: float,
+    trade_spread_bps: float,
+    exchange_default: str,
+    key_prefix: str,
+) -> None:
+    st.markdown("#### Vente rapide")
+    st.caption("Exécute une vente depuis une position existante, sans ressaisir tout le ticket d'ordre.")
+    if holdings is None or holdings.empty:
+        st.info("Aucune position disponible pour la vente rapide.")
+        return
+
+    qmap = quotes.set_index("symbol").to_dict(orient="index") if quotes is not None and not quotes.empty else {}
+    rows = holdings.copy()
+    rows["label"] = rows.apply(
+        lambda r: f"{r['symbol']} · {r['nom']} · qty {safe_float(r['quantite'], 0.0):.4f}", axis=1
+    )
+    symbols = rows["symbol"].astype(str).tolist()
+    labels_by_symbol = dict(zip(rows["symbol"].astype(str), rows["label"].astype(str)))
+
+    with st.form(f"{key_prefix}_form_quick_sell"):
+        symbol = st.selectbox(
+            "Position à vendre",
+            symbols,
+            format_func=lambda s: labels_by_symbol.get(str(s), str(s)),
+            key=f"{key_prefix}_symbol",
+        )
+        selected = rows[rows["symbol"].astype(str) == str(symbol)]
+        pos = selected.iloc[0] if not selected.empty else rows.iloc[0]
+        held_qty = max(safe_float(pos.get("quantite", 0.0), 0.0), 0.0)
+        quote = qmap.get(str(symbol), {})
+        unit_quote = safe_float(quote.get("last", pos.get("cours", np.nan)), np.nan)
+        quote_currency = infer_currency(str(symbol), str(quote.get("currency", pos.get("devise", ""))), state["base_currency"])
+        fx_to_base = safe_float(fx_rates.get(quote_currency, np.nan), np.nan)
+        if np.isnan(fx_to_base) or fx_to_base <= 0:
+            fx_to_base = safe_float(pos.get("fx_to_base", 1.0), 1.0)
+        unit_base = safe_float(unit_quote, 0.0) * safe_float(fx_to_base, 1.0)
+        held_value_base = safe_float(pos.get("valeur_marche", held_qty * unit_base), held_qty * unit_base)
+
+        st.caption(
+            f"Position: {held_qty:.4f} parts | Dernier cours: {safe_float(unit_quote, 0.0):.4f} {quote_currency} "
+            f"| Valeur: {money(held_value_base, state['base_currency'])}"
+        )
+
+        mode = st.selectbox(
+            "Mode de vente",
+            ["position_totale", "quantite", "montant_base", "pourcentage"],
+            format_func=lambda m: {
+                "position_totale": "Vente totale de la position",
+                "quantite": "Vente par quantité (parts)",
+                "montant_base": f"Vente par montant ({state['base_currency']})",
+                "pourcentage": "Vente par pourcentage de la position",
+            }.get(str(m), str(m)),
+            key=f"{key_prefix}_mode",
+        )
+
+        m1, m2 = st.columns(2)
+        with m1:
+            qty_input = st.number_input(
+                "Quantité à vendre",
+                min_value=0.0,
+                value=min(held_qty, 1.0) if held_qty > 0 else 0.0,
+                step=0.1,
+                disabled=(mode != "quantite"),
+                key=f"{key_prefix}_qty",
+            )
+        with m2:
+            amount_input = st.number_input(
+                f"Montant à vendre ({state['base_currency']})",
+                min_value=0.0,
+                value=max(held_value_base * 0.25, 0.0),
+                step=10.0,
+                disabled=(mode != "montant_base"),
+                key=f"{key_prefix}_amount",
+            )
+        pct_input = st.slider(
+            "Pourcentage de la position à vendre (%)",
+            min_value=1,
+            max_value=100,
+            value=50,
+            disabled=(mode != "pourcentage"),
+            key=f"{key_prefix}_pct",
+        )
+
+        o1, o2 = st.columns(2)
+        with o1:
+            order_type = st.selectbox(
+                "Type d'ordre",
+                ["MARKET", "LIMIT", "STOP"],
+                format_func=lambda x: localize_text_fr(x),
+                key=f"{key_prefix}_order_type",
+            )
+        with o2:
+            trigger_price = st.number_input(
+                "Prix déclenchement",
+                min_value=0.0,
+                value=float(safe_float(unit_quote, 0.0)) if order_type != "MARKET" else 0.0,
+                step=0.01,
+                disabled=(order_type == "MARKET"),
+                key=f"{key_prefix}_trigger",
+            )
+
+        x1, x2, x3 = st.columns(3)
+        with x1:
+            fees = st.number_input("Frais", min_value=0.0, value=0.0, step=0.01, key=f"{key_prefix}_fees")
+        with x2:
+            slippage_bps = st.number_input(
+                "Glissement (bps)",
+                min_value=0.0,
+                value=float(trade_slippage_bps),
+                step=0.5,
+                key=f"{key_prefix}_slippage",
+            )
+        with x3:
+            spread_bps = st.number_input(
+                "Écart achat/vente (bps)",
+                min_value=0.0,
+                value=float(trade_spread_bps),
+                step=0.5,
+                key=f"{key_prefix}_spread",
+            )
+
+        trade_exchange = st.selectbox(
+            "Marché",
+            ["XNYS", "XPAR", "XHKG", "XTKS"],
+            index=["XNYS", "XPAR", "XHKG", "XTKS"].index(exchange_default) if exchange_default in {"XNYS", "XPAR", "XHKG", "XTKS"} else 0,
+            key=f"{key_prefix}_exchange",
+        )
+        note = st.text_input("Note (optionnelle)", key=f"{key_prefix}_note")
+        submitted = st.form_submit_button("Vendre la position", use_container_width=True)
+
+        if submitted:
+            qty_target, qty_msg = resolve_quick_sell_quantity(
+                mode=mode,
+                held_qty=held_qty,
+                held_value_base=held_value_base,
+                unit_price_base=unit_base,
+                qty_input=float(qty_input),
+                amount_input=float(amount_input),
+                pct_input=float(pct_input),
+            )
+            if qty_msg:
+                st.warning(qty_msg)
+            if qty_target <= 0:
+                st.error("Quantité de vente calculée invalide.")
+                return
+            if np.isnan(unit_quote) or safe_float(unit_quote, 0.0) <= 0:
+                st.error("Cours de marché indisponible. Vente rapide impossible.")
+                return
+
+            execution = simulate_order_execution(
+                side="SELL",
+                order_type=order_type,
+                market_price=float(unit_quote),
+                quantity=float(qty_target),
+                trigger_price=(float(trigger_price) if order_type != "MARKET" else None),
+                slippage_bps=float(slippage_bps),
+                spread_bps=float(spread_bps),
+                symbol=str(symbol),
+            )
+            exec_status = str(execution.get("execution_status", "PENDING")).upper()
+            exec_qty = float(execution.get("executed_quantity", 0.0))
+            exec_price = float(execution.get("executed_price", unit_quote))
+            fill_ratio = float(execution.get("fill_ratio", 0.0))
+            fees_exec = float(fees) * fill_ratio
+
+            risk_errors: list[str] = []
+            if exec_status in {"FILLED", "PARTIAL"}:
+                risk_errors = check_trade_risk(
+                    side="SELL",
+                    symbol=str(symbol),
+                    quantity=float(exec_qty),
+                    price=float(exec_price),
+                    fees=float(fees_exec),
+                    cash=float(state["cash"]),
+                    holdings=holdings,
+                    base_currency=state["base_currency"],
+                    fx_to_base=float(fx_to_base),
+                    max_line_pct=float(st.session_state["max_line_pct"]),
+                    max_sector_pct=float(st.session_state["max_sector_pct"]),
+                    max_zone_pct=float(st.session_state["max_zone_pct"]),
+                )
+            if risk_errors:
+                for err in risk_errors:
+                    st.error(err)
+                log_event(
+                    conn,
+                    "WARNING",
+                    "quick_sell_blocked_risk",
+                    {"symbol": str(symbol), "errors": risk_errors, "mode": mode},
+                )
+                return
+
+            insert_transaction(
+                conn,
+                symbol=str(symbol),
+                side="SELL",
+                quantity=float(qty_target),
+                price=float(unit_quote),
+                fees=float(fees_exec),
+                currency=quote_currency,
+                fx_to_base=float(fx_to_base),
+                exchange=trade_exchange,
+                strategy_tag="vente_rapide",
+                note=note,
+                order_type=order_type,
+                trigger_price=float(trigger_price) if order_type != "MARKET" else None,
+                execution_status=exec_status,
+                fill_ratio=fill_ratio,
+                executed_quantity=exec_qty,
+                executed_price=exec_price,
+                slippage_bps=float(slippage_bps),
+                spread_bps=float(spread_bps),
+            )
+            if exec_status in {"FILLED", "PARTIAL"}:
+                st.session_state["pending_snapshot_event"] = {
+                    "type": "SELL",
+                    "label": f"Vente rapide {exec_qty:g}/{qty_target:g} {symbol} @ {exec_price:.2f} {quote_currency}",
+                }
+            else:
+                st.session_state["pending_snapshot_event"] = None
+            log_event(
+                conn,
+                "INFO",
+                "quick_sell_inserted",
+                {
+                    "symbol": str(symbol),
+                    "mode": mode,
+                    "qty_target": float(qty_target),
+                    "execution_status": exec_status,
+                    "executed_qty": exec_qty,
+                    "executed_price": exec_price,
+                },
+            )
+            fetch_quotes.clear()
+            fetch_realtime_quotes.clear()
+            fetch_polygon_snapshot_quotes.clear()
+            if exec_status == "PENDING":
+                st.warning("Ordre de vente rapide enregistré en statut En attente.")
+            else:
+                st.success(f"Vente rapide enregistrée ({localize_text_fr(exec_status)}).")
+            st.rerun()
 
 
 def opportunities_and_vigilance(metrics: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -4482,7 +4856,21 @@ def main() -> None:
             st.plotly_chart(create_drawdown_chart(snapshots, currency=state["base_currency"]), use_container_width=True)
             st.caption(f"Fraîcheur repli maximal: {quote_freshness_note}")
 
-        render_positions_portefeuille(holdings, state["base_currency"], split_factors)
+        pos_col, sell_col = st.columns([2.5, 1.5])
+        with pos_col:
+            render_positions_portefeuille(holdings, state["base_currency"], split_factors)
+        with sell_col:
+            render_quick_sell_panel(
+                conn=conn,
+                holdings=holdings,
+                quotes=quotes,
+                fx_rates=fx_rates,
+                state=state,
+                trade_slippage_bps=float(st.session_state["trade_slippage_bps"]),
+                trade_spread_bps=float(st.session_state["trade_spread_bps"]),
+                exchange_default=get_setting(conn, "exchange", DEFAULT_EXCHANGE),
+                key_prefix="positions_quick_sell",
+            )
 
     with tabs[1]:
         st.subheader("Univers d'actifs")
@@ -5095,11 +5483,17 @@ def main() -> None:
                         )
                 fig_cmp.update_layout(
                     title="Comparaison visuelle des simulations (Base 100)",
-                    template="plotly_white",
+                    template=None,
+                    paper_bgcolor="#ffffff",
+                    plot_bgcolor="#ffffff",
+                    font={"color": "#102a5c"},
                     xaxis_title="Date",
                     yaxis_title="Performance (base 100)",
-                    margin={"l": 20, "r": 20, "t": 45, "b": 20},
+                    margin={"l": 70, "r": 24, "t": 52, "b": 48},
+                    legend={"bgcolor": "rgba(255,255,255,0.92)", "bordercolor": "#d7e3f8", "borderwidth": 1},
                 )
+                fig_cmp.update_xaxes(showgrid=True, gridcolor="#dbe5f5", linecolor="#bfd0ea", tickfont={"color": "#102a5c"})
+                fig_cmp.update_yaxes(showgrid=True, gridcolor="#dbe5f5", linecolor="#bfd0ea", tickfont={"color": "#102a5c"})
                 st.plotly_chart(fig_cmp, use_container_width=True)
 
         st.markdown("#### Rebalancement assisté")
@@ -5131,10 +5525,26 @@ def main() -> None:
             )
 
         st.markdown("#### Relecture des instantanés")
-        if snapshots.empty:
+        snapshot_count = len(snapshots) if isinstance(snapshots, pd.DataFrame) else 0
+        if snapshot_count <= 0:
             st.info("Aucun instantané à rejouer.")
         else:
-            replay_idx = st.slider("Point dans l'historique", min_value=0, max_value=len(snapshots) - 1, value=len(snapshots) - 1)
+            max_idx = max(snapshot_count - 1, 0)
+            replay_key = "replay_idx_snapshot"
+            prev_idx = st.session_state.get(replay_key, max_idx)
+            try:
+                prev_idx_int = int(prev_idx)
+            except Exception:
+                prev_idx_int = max_idx
+            prev_idx_int = max(0, min(prev_idx_int, max_idx))
+            st.session_state[replay_key] = prev_idx_int
+            replay_idx = st.slider(
+                "Point dans l'historique",
+                min_value=0,
+                max_value=max_idx,
+                value=prev_idx_int,
+                key=replay_key,
+            )
             row = snapshots.iloc[replay_idx]
             st.write(
                 f"Date: {to_display_time(str(row['captured_at_utc']))} | "
