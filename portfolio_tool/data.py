@@ -23,6 +23,8 @@ EXCHANGE_SESSION_OVERRIDES: dict[str, dict[str, object]] = {
         "open_minute": 30,
         "close_hour": 23,
         "close_minute": 0,
+        # Fallback robuste: calendrier semaine (lun-ven) si la classe bourse n'existe pas.
+        "fallback_weekdays_only": True,
     },
 }
 
@@ -226,6 +228,52 @@ def _apply_exchange_session_overrides(schedule: pd.DataFrame, exchange: str) -> 
     return out
 
 
+def _build_weekday_schedule(exchange: str, start_date, end_date) -> pd.DataFrame:
+    cfg = EXCHANGE_SESSION_OVERRIDES.get(str(exchange).upper(), {})
+    tz_local = str(cfg.get("timezone", "UTC"))
+    open_hour = int(cfg.get("open_hour", 9))
+    open_minute = int(cfg.get("open_minute", 0))
+    close_hour = int(cfg.get("close_hour", 17))
+    close_minute = int(cfg.get("close_minute", 30))
+
+    days = pd.date_range(start=start_date, end=end_date, freq="D")
+    if days.empty:
+        return pd.DataFrame(columns=["market_open", "market_close"])
+    weekdays = days[days.weekday < 5]
+    if len(weekdays) == 0:
+        return pd.DataFrame(columns=["market_open", "market_close"])
+
+    anchor_local = weekdays.tz_localize(tz_local)
+    open_local = anchor_local + pd.Timedelta(hours=open_hour, minutes=open_minute)
+    close_local = anchor_local + pd.Timedelta(hours=close_hour, minutes=close_minute)
+    schedule = pd.DataFrame(
+        {
+            "market_open": open_local.tz_convert("UTC"),
+            "market_close": close_local.tz_convert("UTC"),
+        },
+        index=pd.to_datetime(weekdays).normalize(),
+    )
+    return schedule
+
+
+def _load_exchange_schedule(exchange: str, start_date, end_date) -> pd.DataFrame:
+    exchange_code = str(exchange or "").upper()
+    cfg = EXCHANGE_SESSION_OVERRIDES.get(exchange_code, {})
+
+    if bool(cfg.get("fallback_weekdays_only", False)):
+        return _build_weekday_schedule(exchange_code, start_date, end_date)
+
+    try:
+        cal = _get_calendar(exchange_code)
+        schedule = cal.schedule(start_date=start_date, end_date=end_date)
+    except Exception:
+        # En dernier recours, si un override existe, on bascule sur un calendrier semaine.
+        if cfg:
+            return _build_weekday_schedule(exchange_code, start_date, end_date)
+        raise
+    return _apply_exchange_session_overrides(schedule, exchange_code)
+
+
 def filter_prices_to_market_sessions(prices: pd.DataFrame, exchange: str = "XNYS") -> pd.DataFrame:
     """
     Filtre les prix aux dates/heures réellement ouvertes pour l'exchange indiqué.
@@ -233,15 +281,13 @@ def filter_prices_to_market_sessions(prices: pd.DataFrame, exchange: str = "XNYS
     if prices.empty:
         return prices
 
-    cal = _get_calendar(exchange)
     idx = pd.to_datetime(prices.index, errors="coerce")
     if idx.isna().all():
         raise ValueError("Index temporel invalide pour filtrage marché.")
 
     start_date = idx.min().date()
     end_date = idx.max().date()
-    schedule = cal.schedule(start_date=start_date, end_date=end_date)
-    schedule = _apply_exchange_session_overrides(schedule, exchange)
+    schedule = _load_exchange_schedule(exchange=exchange, start_date=start_date, end_date=end_date)
     if schedule.empty:
         return prices.iloc[0:0]
 
@@ -259,14 +305,15 @@ def filter_prices_to_market_sessions(prices: pd.DataFrame, exchange: str = "XNYS
     opens = session_key.map(schedule_local["market_open"].dt.tz_convert("UTC").dt.tz_localize(None))
     closes = session_key.map(schedule_local["market_close"].dt.tz_convert("UTC").dt.tz_localize(None))
     keep = opens.notna() & closes.notna() & (idx_naive_utc >= opens) & (idx_naive_utc <= closes)
-    return prices.loc[keep.values]
+    keep_mask = np.asarray(keep, dtype=bool)
+    return prices.loc[keep_mask]
 
 
 def get_market_clock(exchange: str = "XNYS", now_utc: pd.Timestamp | None = None) -> MarketClock:
     """
     Retourne l'état d'ouverture du marché et les prochaines bornes de session.
     """
-    cal = _get_calendar(exchange)
+    exchange_code = str(exchange or "").upper()
     now = now_utc or pd.Timestamp.now(tz="UTC")
     now = pd.Timestamp(now)
     if now.tzinfo is None:
@@ -274,12 +321,20 @@ def get_market_clock(exchange: str = "XNYS", now_utc: pd.Timestamp | None = None
     else:
         now = now.tz_convert("UTC")
 
-    schedule = cal.schedule(start_date=(now - timedelta(days=7)).date(), end_date=(now + timedelta(days=7)).date())
-    schedule = _apply_exchange_session_overrides(schedule, exchange)
+    schedule = _load_exchange_schedule(
+        exchange=exchange_code,
+        start_date=(now - timedelta(days=7)).date(),
+        end_date=(now + timedelta(days=7)).date(),
+    )
+    tz_name = str(EXCHANGE_SESSION_OVERRIDES.get(exchange_code, {}).get("timezone", ""))
+    if not tz_name:
+        try:
+            tz_name = str(_get_calendar(exchange_code).tz)
+        except Exception:
+            tz_name = "UTC"
     if schedule.empty:
-        tz_name = str(EXCHANGE_SESSION_OVERRIDES.get(str(exchange).upper(), {}).get("timezone", str(cal.tz)))
         return MarketClock(
-            exchange=exchange,
+            exchange=exchange_code,
             timezone=tz_name,
             is_open=False,
             next_open_utc=None,
@@ -296,9 +351,8 @@ def get_market_clock(exchange: str = "XNYS", now_utc: pd.Timestamp | None = None
     next_open = current_open if current_open is not None else (future.iloc[0]["market_open"] if not future.empty else None)
     next_close = current_close if current_close is not None else (future.iloc[0]["market_close"] if not future.empty else None)
 
-    tz_name = str(EXCHANGE_SESSION_OVERRIDES.get(str(exchange).upper(), {}).get("timezone", str(cal.tz)))
     return MarketClock(
-        exchange=exchange,
+        exchange=exchange_code,
         timezone=tz_name,
         is_open=not active.empty,
         next_open_utc=next_open.isoformat() if next_open is not None else None,

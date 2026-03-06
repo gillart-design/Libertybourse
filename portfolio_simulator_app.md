@@ -51,11 +51,15 @@ DEFAULT_INITIAL_CAPITAL = 100_000.0
 DEFAULT_EXCHANGE = "TRLS"
 EXCHANGE_OPTIONS = ["TRLS", "XPAR", "XNYS", "XTKS", "XHKG"]
 EXCHANGE_LABELS = {
-    "TRLS": "TRLS (Trade Republic / LSX 07:30-23:00)",
-    "XPAR": "XPAR (Paris 09:00-17:30)",
+    "TRLS": "TRLS (Trade Republic)",
+    "XPAR": "XPAR (Paris)",
     "XNYS": "XNYS (New York)",
     "XTKS": "XTKS (Tokyo)",
     "XHKG": "XHKG (Hong Kong)",
+}
+EXCHANGE_HOURS = {
+    "TRLS": "07:30-23:00",
+    "XPAR": "09:00-17:30",
 }
 DEFAULT_REFRESH_SECONDS = 10
 DEFAULT_REALTIME_SYMBOLS = ["SPY", "QQQ", "AAPL", "MSFT", "GLD", "EEM"]
@@ -83,6 +87,7 @@ DEFAULT_SIM_SLIPPAGE_BPS = 5.0
 DEFAULT_SIM_SPREAD_BPS = 2.0
 DEFAULT_SIM_PARTIAL_MIN = 0.55
 DEFAULT_SIM_PARTIAL_MAX = 1.0
+POSITION_DUST_EPSILON = 1e-6
 
 API_PROVIDERS = ["polygon_ws_tick", "yahoo_quote_api", "yfinance_history", "yahoo_fx"]
 PROVIDER_HEALTH_LOCK = threading.Lock()
@@ -511,12 +516,17 @@ def render_dataframe_fr(data: pd.DataFrame, **kwargs) -> None:
     localized = localize_dataframe_fr(data)
     hide_index = bool(kwargs.get("hide_index", True))
     height = kwargs.get("height")
-    wrapper_style = "overflow:auto;"
-    if isinstance(height, int) and height > 0:
-        wrapper_style += f"max-height:{height}px;"
+    max_height = int(height) if isinstance(height, int) and height > 0 else 420
+    wrapper_style = f"overflow:auto;max-height:{max_height}px;"
 
     if localized is None:
         localized = pd.DataFrame()
+    if not localized.empty:
+        numeric_cols = localized.select_dtypes(include=[np.number]).columns
+        for col in numeric_cols:
+            s = pd.to_numeric(localized[col], errors="coerce")
+            s = s.mask(s.abs() < 1e-9, 0.0).round(6)
+            localized[col] = s
     if localized.empty:
         cols = list(localized.columns)
         if cols:
@@ -1744,7 +1754,7 @@ def compute_positions(transactions: pd.DataFrame, accounting_method: str = DEFAU
         cost_basis = 0.0
         cost_basis_base = 0.0
         lot_index = 0
-        while remaining > 1e-12 and ledger["lots"]:
+        while remaining > POSITION_DUST_EPSILON and ledger["lots"]:
             if method == "lifo":
                 lot = ledger["lots"][-1]
                 lot_index = len(ledger["lots"]) - 1
@@ -1757,7 +1767,7 @@ def compute_positions(transactions: pd.DataFrame, accounting_method: str = DEFAU
             cost_basis_base += matched * lot["unit_cost"] * lot_fx
             lot["qty"] -= matched
             remaining -= matched
-            if lot["qty"] <= 1e-12:
+            if lot["qty"] <= POSITION_DUST_EPSILON:
                 ledger["lots"].pop(lot_index)
 
         realized_quote = proceeds_net - cost_basis
@@ -1765,7 +1775,7 @@ def compute_positions(transactions: pd.DataFrame, accounting_method: str = DEFAU
         ledger["realized_pnl"] += realized_quote
         ledger["realized_pnl_base"] += realized_base
         ledger["quantity"] -= sell_qty
-        if ledger["quantity"] <= 1e-12:
+        if ledger["quantity"] <= POSITION_DUST_EPSILON:
             ledger["quantity"] = 0.0
             ledger["lots"] = []
 
@@ -2487,14 +2497,29 @@ def render_css() -> None:
             background: linear-gradient(180deg, #030f25 0%, #07204c 100%);
             border-right: 1px solid rgba(173, 196, 234, 0.25);
         }
-        section[data-testid="stSidebar"] * {
-            color: #e9f1ff !important;
+        section[data-testid="stSidebar"] .stMarkdown,
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] span,
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3,
+        section[data-testid="stSidebar"] h4 {
+            color: #eaf2ff !important;
+        }
+        section[data-testid="stSidebar"] label[data-testid="stWidgetLabel"] {
+            color: #dbe8ff !important;
+            font-weight: 600 !important;
         }
         section[data-testid="stSidebar"] .stCaption {
             color: #bfd0ef !important;
         }
-        section[data-testid="stSidebar"] label[data-testid="stWidgetLabel"] {
-            color: #d7e5ff !important;
+        section[data-testid="stSidebar"] [data-testid="stSidebarContent"] h3 {
+            color: #f4f8ff !important;
+            margin-top: 0.75rem !important;
+            margin-bottom: 0.3rem !important;
+            padding-left: 0.2rem;
+            border-left: 3px solid #2f6ccc;
         }
 
         section[data-testid="stSidebar"] .stNumberInput input,
@@ -2503,13 +2528,31 @@ def render_css() -> None:
         section[data-testid="stSidebar"] .stDateInput input,
         section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"],
         section[data-testid="stSidebar"] [data-baseweb="tag"] {
-            background: #06193f !important;
-            color: #f3f8ff !important;
-            border: 1px solid #2a4f8e !important;
+            background: #ffffff !important;
+            color: #102a5c !important;
+            border: 1px solid #a8c1e8 !important;
+        }
+        section[data-testid="stSidebar"] [data-baseweb="select"] * {
+            color: #102a5c !important;
+        }
+        section[data-testid="stSidebar"] [data-baseweb="tag"] {
+            background: #e8f0ff !important;
+            color: #133a80 !important;
+            border: 1px solid #b8cff3 !important;
         }
         section[data-testid="stSidebar"] [data-baseweb="slider"] div[role="slider"] {
             background: #2f6ccc !important;
             border-color: #2f6ccc !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button,
+        section[data-testid="stSidebar"] .stButton > button {
+            background: linear-gradient(160deg, #123874 0%, #1a4ea4 100%) !important;
+            border: 1px solid #3c70c7 !important;
+            color: #ffffff !important;
+        }
+        section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button * ,
+        section[data-testid="stSidebar"] .stButton > button * {
+            color: #ffffff !important;
         }
 
         div[data-testid="stAppViewContainer"],
@@ -2537,6 +2580,19 @@ def render_css() -> None:
             border: 1px solid #cfdef7;
             border-radius: 6px;
             padding: 0.08rem 0.34rem;
+        }
+        div[data-testid="stInfo"],
+        div[data-testid="stSuccess"],
+        div[data-testid="stWarning"],
+        div[data-testid="stError"] {
+            border-radius: 12px !important;
+            border: 1px solid #cadcf7 !important;
+        }
+        div[data-testid="stInfo"] *,
+        div[data-testid="stSuccess"] *,
+        div[data-testid="stWarning"] *,
+        div[data-testid="stError"] * {
+            color: #102a5c !important;
         }
 
         div[data-testid="stAppViewContainer"] .stNumberInput input,
@@ -2574,7 +2630,16 @@ def render_css() -> None:
             color: #ffffff !important;
             font-weight: 700 !important;
         }
+        div[data-testid="stFormSubmitButton"] > button {
+            background: linear-gradient(160deg, #123874 0%, #1a4ea4 100%) !important;
+            border: 1px solid #2c62bd !important;
+            color: #ffffff !important;
+            font-weight: 700 !important;
+        }
         .stButton > button * {
+            color: #ffffff !important;
+        }
+        div[data-testid="stFormSubmitButton"] > button * {
             color: #ffffff !important;
         }
         .stButton > button:hover {
@@ -2670,6 +2735,7 @@ def render_css() -> None:
             border-right: 1px solid #eef3fc;
             padding: 0.5rem 0.6rem;
             vertical-align: middle;
+            white-space: nowrap;
         }
         table.lc-table tbody tr:nth-child(even) td {
             background: #fbfdff;
@@ -3049,6 +3115,7 @@ def apply_plot_theme(
         font={"color": "#102a5c"},
         colorway=["#103b88", "#1f5cb5", "#0f9d58", "#d93025", "#6d83aa"],
         legend={"bgcolor": "rgba(255,255,255,0.85)", "bordercolor": "#d7e3f8", "borderwidth": 1},
+        height=420,
         margin={"l": 106, "r": 30, "t": margin_top, "b": 66},
         uniformtext={"minsize": 10, "mode": "hide"},
     )
@@ -3189,6 +3256,15 @@ def create_allocation_chart(data: pd.DataFrame, label_col: str, value_col: str, 
     if data.empty or float(data[value_col].sum()) <= 0:
         fig = go.Figure()
         apply_plot_theme(fig, title=f"{title} (vide)")
+        fig.add_annotation(
+            text="Aucune position valorisée pour ce graphique.",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font={"color": "#4f6388", "size": 13},
+        )
         return fig
     fig = px.pie(
         data,
@@ -3221,6 +3297,15 @@ def create_drawdown_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go.
     fig = go.Figure()
     if snapshots.empty:
         apply_plot_theme(fig, title="Repli maximal indisponible")
+        fig.add_annotation(
+            text="Aucun historique disponible.",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font={"color": "#4f6388", "size": 13},
+        )
         return fig
     pts = snapshots.copy()
     pts["captured_local"] = pd.to_datetime(pts["captured_at_utc"], utc=True).dt.tz_convert(DISPLAY_TZ)
@@ -3323,6 +3408,15 @@ def create_benchmark_relative_chart(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     if df is None or df.empty or "date" not in df.columns:
         apply_plot_theme(fig, title="Indice de référence vs portefeuille indisponible")
+        fig.add_annotation(
+            text="Aucune courbe disponible pour comparer.",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font={"color": "#4f6388", "size": 13},
+        )
         return fig
     x = pd.to_datetime(df["date"], errors="coerce")
     if "equity" in df.columns:
@@ -3356,19 +3450,35 @@ def create_benchmark_relative_chart(df: pd.DataFrame) -> go.Figure:
         yaxis_title="Base 100",
         margin_top=45,
     )
+    if len(fig.data) == 0:
+        fig.add_annotation(
+            text="Données de performance insuffisantes.",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font={"color": "#4f6388", "size": 13},
+        )
     fig.update_xaxes(tickformat="%b %Y", tickangle=0, nticks=8)
     return fig
 
 
 def create_market_clock_card(exchange: str) -> tuple[str, str, str]:
+    exchange_code = str(exchange or "").upper()
+    hours_hint = EXCHANGE_HOURS.get(exchange_code, "")
     try:
-        clock = get_market_clock(exchange=exchange)
+        clock = get_market_clock(exchange=exchange_code)
         status = "Ouvert" if clock.is_open else "Fermé"
         subtitle = f"Prochaine ouverture: {to_display_time(clock.next_open_utc)}"
         detail = f"Prochaine clôture: {to_display_time(clock.next_close_utc)}"
+        if hours_hint:
+            detail = f"{detail} | Horaires: {hours_hint}"
         return status, subtitle, detail
-    except Exception as exc:
-        return "Indisponible", f"Horloge marché non disponible ({exchange})", str(exc)
+    except Exception:
+        # Ne jamais afficher une exception brute dans la carte KPI.
+        fallback_detail = f"Horaires de référence: {hours_hint}" if hours_hint else "Horaires indisponibles"
+        return "Indisponible", f"Horloge marché non disponible ({exchange_code})", fallback_detail
 
 
 def render_positions_portefeuille(holdings: pd.DataFrame, base_currency: str, split_factors: dict[str, float]) -> None:
@@ -3426,6 +3536,7 @@ def render_positions_portefeuille(holdings: pd.DataFrame, base_currency: str, sp
         ),
         use_container_width=True,
         hide_index=True,
+        height=340,
     )
 
 
@@ -4438,6 +4549,8 @@ def main() -> None:
             index=exchange_index(exchange),
             format_func=lambda x: EXCHANGE_LABELS.get(x, x),
         )
+        if new_exchange in EXCHANGE_HOURS:
+            st.caption(f"Horaires de place: {EXCHANGE_HOURS[new_exchange]} (heure locale marché)")
         base_currency = st.selectbox("Devise de valorisation", ["EUR", "USD", "GBP", "JPY", "CHF"], index=["EUR", "USD", "GBP", "JPY", "CHF"].index(st.session_state["base_currency"]) if st.session_state["base_currency"] in {"EUR","USD","GBP","JPY","CHF"} else 0)
         benchmark_symbol = st.selectbox(
             "Indice comparatif",
@@ -5533,6 +5646,8 @@ def main() -> None:
                 st.plotly_chart(fig_bt, use_container_width=True)
                 st.plotly_chart(create_benchmark_relative_chart(bt_curve_df), use_container_width=True)
                 st.caption(f"Fraîcheur vues simulation: {quote_freshness_note}")
+            else:
+                st.info("Courbes de simulation indisponibles pour cette exécution (données insuffisantes).")
             st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("#### Simulations sauvegardées et comparaison")
@@ -5620,6 +5735,14 @@ def main() -> None:
         snapshot_count = len(snapshots) if isinstance(snapshots, pd.DataFrame) else 0
         if snapshot_count <= 0:
             st.info("Aucun instantané à rejouer.")
+        elif snapshot_count == 1:
+            row = snapshots.iloc[0]
+            st.caption("Un seul instantané disponible.")
+            st.write(
+                f"Date: {to_display_time(str(row['captured_at_utc']))} | "
+                f"Valeur: {money(float(row['portfolio_value']), state['base_currency'])} | "
+                f"Événement: {row.get('event_type', '')} {row.get('event_label', '')}"
+            )
         else:
             max_idx = max(snapshot_count - 1, 0)
             replay_key = "replay_idx_snapshot"

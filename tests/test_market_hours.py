@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -73,3 +74,31 @@ def test_trls_session_override_forces_0730_2300_local_time() -> None:
 
 def test_trls_calendar_alias_points_to_xetr() -> None:
     assert market_data.EXCHANGE_CALENDAR_ALIASES["TRLS"] == "XETR"
+
+
+def test_trls_weekday_fallback_is_used_when_calendar_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(_: str):
+        raise RuntimeError("calendar unavailable")
+
+    monkeypatch.setattr(market_data, "_get_calendar", _boom)
+
+    idx = pd.date_range("2026-03-02 05:00:00+00:00", periods=5, freq="h")
+    prices = pd.DataFrame({"AAA": [1, 2, 3, 4, 5]}, index=idx)
+    out = market_data.filter_prices_to_market_sessions(prices, "TRLS")
+
+    # 07:30 Berlin (CET) => 06:30 UTC: la barre 07:00 UTC doit être gardée.
+    kept_hours = [ts.hour for ts in pd.to_datetime(out.index, utc=True)]
+    assert kept_hours == [7, 8, 9]
+
+
+def test_get_market_clock_trls_works_even_without_market_calendar(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(_: str):
+        raise RuntimeError("calendar unavailable")
+
+    monkeypatch.setattr(market_data, "_get_calendar", _boom)
+    now = pd.Timestamp("2026-03-02T08:00:00Z")
+    clock = market_data.get_market_clock(exchange="TRLS", now_utc=now)
+
+    assert clock.exchange == "TRLS"
+    assert clock.timezone == "Europe/Berlin"
+    assert clock.is_open is True
