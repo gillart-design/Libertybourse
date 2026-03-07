@@ -109,6 +109,8 @@ Date,Ticker,Close
 
 Une application Streamlit est disponible pour un usage interactif avec:
 
+- URL de production: https://libertybourse-kbussevqm2stdwmrqbxkf4.streamlit.app
+
 - Synthèse KPI + graphique d'évolution avec snapshots achat/vente/hausse/baisse
 - Actualisation temps réel des actifs sélectionnés (Yahoo Quote API + rafraîchissement périodique)
 - Mode WebSocket tick-by-tick (Polygon) pour les tickers US avec fallback REST automatique

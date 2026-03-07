@@ -38,6 +38,7 @@ except Exception:  # pragma: no cover - fallback runtime
 
 APP_TITLE = "Liberty Bourse"
 APP_SUBTITLE = "Suivi dynamique, répartition géographique/sectorielle et assistant d'aide à la décision"
+APP_PUBLIC_URL = "https://libertybourse-kbussevqm2stdwmrqbxkf4.streamlit.app"
 MAIN_TAB_LABELS = ["Synthèse", "Sélection d'Actifs", "Marchés", "Simulation & Opérations", "Assistant Aide à la Décision"]
 AUTO_REFRESH_ALLOWED_TABS = {"Synthèse", "Marchés"}
 DEFAULT_INITIAL_CAPITAL = 100_000.0
@@ -4641,6 +4642,7 @@ def main() -> None:
     with brand_c2:
         st.markdown("<div class='main-title'>Liberty Bourse</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='subtitle'>{APP_SUBTITLE}</div>", unsafe_allow_html=True)
+    st.caption(f"App Streamlit: {APP_PUBLIC_URL}")
     st.caption("Build UI: css-v3")
     if auth_email:
         st.caption(f"Session Base44: {auth_email}")
