@@ -36,7 +36,7 @@ except Exception:  # pragma: no cover - fallback runtime
     st_autorefresh = None
 
 
-APP_TITLE = "Simulateur de Portefeuille Boursier"
+APP_TITLE = "Liberty Bourse"
 APP_SUBTITLE = "Suivi dynamique, répartition géographique/sectorielle et assistant d'aide à la décision"
 MAIN_TAB_LABELS = ["Synthèse", "Sélection d'Actifs", "Marchés", "Simulation & Opérations", "Assistant Aide à la Décision"]
 AUTO_REFRESH_ALLOWED_TABS = {"Synthèse", "Marchés"}
@@ -82,7 +82,7 @@ DEFAULT_SIM_PARTIAL_MIN = 0.55
 DEFAULT_SIM_PARTIAL_MAX = 1.0
 POSITION_DUST_EPSILON = 1e-6
 
-API_PROVIDERS = ["polygon_ws_tick", "yahoo_quote_api", "yfinance_history", "yahoo_fx"]
+API_PROVIDERS = ["polygon_ws_tick", "yahoo_quote_api", "yfinance_history"]
 PROVIDER_HEALTH_LOCK = threading.Lock()
 PROVIDER_HEALTH: dict[str, dict[str, float | str]] = {
     p: {
@@ -99,7 +99,6 @@ PROVIDER_RATE_LOCK = threading.Lock()
 PROVIDER_LAST_CALL_TS: dict[str, float] = {}
 PROVIDER_MIN_INTERVAL_SECONDS = {
     "yahoo_quote_api": 0.2,
-    "yahoo_fx": 0.2,
     "yfinance_history": 0.25,
     "polygon_ws_tick": 0.0,
 }
@@ -107,6 +106,7 @@ API_MAX_RETRIES = 3
 API_BACKOFF_BASE_SECONDS = 0.35
 API_CIRCUIT_BREAKER_ERRORS = 3
 API_CIRCUIT_BREAKER_SECONDS = 25
+SSL_ERROR_MARKERS = ("CERTIFICATE_VERIFY_FAILED", "SSL", "TLS")
 
 EVENT_COLORS = {
     "INIT": "#9ca3af",
@@ -270,6 +270,24 @@ ASSET_UNIVERSE = [
 
 CATALOG_BY_SYMBOL = {row["symbol"]: row for row in ASSET_UNIVERSE}
 
+
+def symbol_display_name(symbol: str) -> str:
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return ""
+    name = str(CATALOG_BY_SYMBOL.get(sym, {}).get("name", "")).strip()
+    return name if name else sym
+
+
+def symbol_with_name_label(symbol: str) -> str:
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return ""
+    name = symbol_display_name(sym)
+    if name.upper() == sym:
+        return sym
+    return f"{name} ({sym})"
+
 LOGGER = logging.getLogger("portfolio_simulator")
 
 DISPLAY_LABELS_FR = {
@@ -382,6 +400,7 @@ DISPLAY_VALUES_FR = {
     "FILLED": "Exécuté",
     "PARTIAL": "Partiel",
     "PENDING": "En attente",
+    "PENDING_OPEN": "En attente ouverture",
     "INIT": "Initialisation",
     "UP": "Hausse",
     "DOWN": "Baisse",
@@ -430,6 +449,34 @@ def setup_logger() -> None:
 def safe_float(value: object, default: float = 0.0) -> float:
     try:
         return float(value)
+    except Exception:
+        return default
+
+
+def coerce_float(value: object, default: float = np.nan) -> float:
+    if value is None:
+        return default
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        try:
+            out = float(value)
+            return out if np.isfinite(out) else default
+        except Exception:
+            return default
+    raw = str(value).strip()
+    if not raw:
+        return default
+    # Tolère formats "1 234,56", "1,234.56" ou "1234.56".
+    cleaned = raw.replace("\u202f", "").replace(" ", "")
+    if "," in cleaned and "." in cleaned:
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        cleaned = cleaned.replace(",", ".")
+    try:
+        out = float(cleaned)
+        return out if np.isfinite(out) else default
     except Exception:
         return default
 
@@ -507,6 +554,14 @@ def localize_dataframe_fr(df: pd.DataFrame) -> pd.DataFrame:
 
 def render_dataframe_fr(data: pd.DataFrame, **kwargs) -> None:
     localized = localize_dataframe_fr(data)
+    if isinstance(localized, pd.DataFrame) and not localized.empty:
+        cols = list(localized.columns)
+        if "Nom" in cols and "Ticker" in cols and cols.index("Nom") > cols.index("Ticker"):
+            ordered = [c for c in cols if c not in {"Nom", "Ticker"}]
+            localized = localized[["Nom", "Ticker", *ordered]]
+        elif "name" in cols and "symbol" in cols and cols.index("name") > cols.index("symbol"):
+            ordered = [c for c in cols if c not in {"name", "symbol"}]
+            localized = localized[["name", "symbol", *ordered]]
     hide_index = bool(kwargs.get("hide_index", True))
     height = kwargs.get("height")
     max_height = int(height) if isinstance(height, int) and height > 0 else 420
@@ -815,6 +870,12 @@ def _provider_record_error(provider: str, message: str) -> None:
             h["circuit_open_until"] = time.monotonic() + API_CIRCUIT_BREAKER_SECONDS
 
 
+def _provider_open_circuit(provider: str, seconds: float) -> None:
+    with PROVIDER_HEALTH_LOCK:
+        h = PROVIDER_HEALTH.setdefault(provider, {})
+        h["circuit_open_until"] = max(float(h.get("circuit_open_until", 0.0)), time.monotonic() + max(seconds, 1.0))
+
+
 def _provider_circuit_open(provider: str) -> bool:
     with PROVIDER_HEALTH_LOCK:
         open_until = float(PROVIDER_HEALTH.get(provider, {}).get("circuit_open_until", 0.0))
@@ -835,6 +896,11 @@ def _provider_wait_for_rate_limit(provider: str) -> None:
         PROVIDER_LAST_CALL_TS[provider] = now
 
 
+def _is_ssl_transport_error(message: str) -> bool:
+    msg = str(message or "").upper()
+    return any(marker in msg for marker in SSL_ERROR_MARKERS)
+
+
 def _http_get_json_with_resilience(url: str, provider: str, timeout: int = 8) -> tuple[dict | None, str | None]:
     if _provider_circuit_open(provider):
         return None, "circuit_open"
@@ -850,6 +916,9 @@ def _http_get_json_with_resilience(url: str, provider: str, timeout: int = 8) ->
         except Exception as exc:
             last_error = str(exc)
             _provider_record_error(provider, last_error)
+            if _is_ssl_transport_error(last_error):
+                _provider_open_circuit(provider, API_CIRCUIT_BREAKER_SECONDS)
+                return None, f"ssl_error:{last_error}"
             if attempt < API_MAX_RETRIES - 1:
                 sleep_for = API_BACKOFF_BASE_SECONDS * (2**attempt)
                 time.sleep(sleep_for)
@@ -940,6 +1009,21 @@ def quote_freshness_summary(quotes: pd.DataFrame) -> str:
     if ages.empty:
         return "Fraîcheur des données: indisponible."
     return f"Fraîcheur: min {ages.min():.1f}s | médiane {ages.median():.1f}s | max {ages.max():.1f}s"
+
+
+def quote_degraded_mode_message(quotes: pd.DataFrame) -> str | None:
+    if quotes is None or quotes.empty:
+        return None
+    q = quotes.copy()
+    if "api_error" in q.columns:
+        errors = q["api_error"].astype(str)
+        if errors.str.contains("ssl_error|CERTIFICATE_VERIFY_FAILED", case=False, regex=True).any():
+            return "Mode dégradé cotations: Yahoo REST en échec SSL, bascule automatique vers historique différé."
+    if "source" in q.columns:
+        delayed_ratio = float((q["source"].astype(str) == "yfinance_history").mean())
+        if delayed_ratio >= 0.5:
+            return "Mode dégradé cotations: majorité des prix servis en différé (fallback historique)."
+    return None
 
 
 def merge_quotes(primary: pd.DataFrame, secondary: pd.DataFrame, symbols: tuple[str, ...]) -> pd.DataFrame:
@@ -1589,6 +1673,165 @@ def insert_transaction(
         ),
     )
     conn.commit()
+
+
+def update_transaction_execution(
+    conn: sqlite3.Connection,
+    *,
+    tx_id: int,
+    executed_at_utc: str | None = None,
+    execution_status: str,
+    fill_ratio: float,
+    executed_quantity: float,
+    executed_price: float,
+    fees: float,
+    currency: str,
+    fx_to_base: float,
+    reference_price: float,
+) -> None:
+    conn.execute(
+        """
+        UPDATE transactions
+        SET executed_at_utc = COALESCE(?, executed_at_utc),
+            price = ?,
+            fees = ?,
+            currency = ?,
+            fx_to_base = ?,
+            execution_status = ?,
+            fill_ratio = ?,
+            executed_quantity = ?,
+            executed_price = ?
+        WHERE id = ?
+        """,
+        (
+            executed_at_utc,
+            float(reference_price),
+            float(fees),
+            (currency or DEFAULT_BASE_CURRENCY).upper(),
+            float(fx_to_base) if float(fx_to_base) > 0 else 1.0,
+            str(execution_status).upper(),
+            float(fill_ratio),
+            float(executed_quantity),
+            float(executed_price),
+            int(tx_id),
+        ),
+    )
+
+
+def market_clock_for_exchange(exchange: str) -> tuple[bool, object]:
+    code = str(exchange or DEFAULT_EXCHANGE).upper()
+    try:
+        clock = get_market_clock(exchange=code)
+    except Exception as exc:
+        return False, exc
+    return bool(clock.is_open), clock
+
+
+def process_pending_open_orders(
+    conn: sqlite3.Connection,
+    *,
+    quotes: pd.DataFrame,
+    fx_rates: dict[str, float],
+    base_currency: str,
+) -> dict[str, int]:
+    tx = load_transactions(conn)
+    if tx.empty:
+        return {"processed": 0, "filled": 0, "pending_trigger": 0}
+    pending_open = tx[tx["execution_status"].astype(str).str.upper() == "PENDING_OPEN"].copy()
+    if pending_open.empty:
+        return {"processed": 0, "filled": 0, "pending_trigger": 0}
+
+    qmap = quotes.set_index("symbol").to_dict(orient="index") if quotes is not None and not quotes.empty else {}
+    processed = 0
+    filled = 0
+    pending_trigger = 0
+
+    for row in pending_open.itertuples(index=False):
+        tx_id = int(getattr(row, "id"))
+        exchange = str(getattr(row, "exchange", DEFAULT_EXCHANGE) or DEFAULT_EXCHANGE).upper()
+        is_open, clock_or_exc = market_clock_for_exchange(exchange)
+        if not is_open:
+            continue
+
+        symbol = str(getattr(row, "symbol", "")).upper()
+        quote = qmap.get(symbol, {})
+        market_price = safe_float(quote.get("last", np.nan), np.nan)
+        if np.isnan(market_price) or market_price <= 0:
+            continue
+
+        trigger_price_raw = safe_float(getattr(row, "trigger_price", np.nan), np.nan)
+        trigger_price = float(trigger_price_raw) if not np.isnan(trigger_price_raw) and trigger_price_raw > 0 else None
+        execution = simulate_order_execution(
+            side=str(getattr(row, "side", "BUY")),
+            order_type=str(getattr(row, "order_type", "MARKET")),
+            market_price=float(market_price),
+            quantity=float(safe_float(getattr(row, "quantity", 0.0), 0.0)),
+            trigger_price=trigger_price,
+            slippage_bps=float(safe_float(getattr(row, "slippage_bps", 0.0), 0.0)),
+            spread_bps=float(safe_float(getattr(row, "spread_bps", 0.0), 0.0)),
+            symbol=symbol,
+        )
+        exec_status = str(execution.get("execution_status", "PENDING")).upper()
+        exec_qty = float(execution.get("executed_quantity", 0.0))
+        exec_price = float(execution.get("executed_price", market_price))
+        fill_ratio = float(execution.get("fill_ratio", 0.0))
+
+        quote_currency = infer_currency(symbol, str(quote.get("currency", getattr(row, "currency", ""))), base_currency)
+        fx_to_base = safe_float(fx_rates.get(quote_currency, np.nan), np.nan)
+        if np.isnan(fx_to_base) or fx_to_base <= 0:
+            fx_to_base = 1.0 if quote_currency == base_currency else safe_float(getattr(row, "fx_to_base", 1.0), 1.0)
+
+        planned_fees = float(safe_float(getattr(row, "fees", 0.0), 0.0))
+        fees_exec = planned_fees * fill_ratio if exec_status in {"FILLED", "PARTIAL"} else 0.0
+
+        update_transaction_execution(
+            conn,
+            tx_id=tx_id,
+            executed_at_utc=utc_now_iso() if exec_status in {"FILLED", "PARTIAL"} else None,
+            execution_status=exec_status if exec_status in {"FILLED", "PARTIAL"} else "PENDING",
+            fill_ratio=fill_ratio if exec_status in {"FILLED", "PARTIAL"} else 0.0,
+            executed_quantity=exec_qty if exec_status in {"FILLED", "PARTIAL"} else 0.0,
+            executed_price=exec_price if exec_status in {"FILLED", "PARTIAL"} else float(market_price),
+            fees=fees_exec,
+            currency=quote_currency,
+            fx_to_base=float(fx_to_base),
+            reference_price=float(market_price),
+        )
+        processed += 1
+        if exec_status in {"FILLED", "PARTIAL"}:
+            filled += 1
+            log_event(
+                conn,
+                "INFO",
+                "queued_order_filled_on_open",
+                {
+                    "id": tx_id,
+                    "symbol": symbol,
+                    "side": str(getattr(row, "side", "")),
+                    "exchange": exchange,
+                    "status": exec_status,
+                    "executed_qty": exec_qty,
+                    "executed_price": exec_price,
+                },
+            )
+        else:
+            pending_trigger += 1
+            log_event(
+                conn,
+                "INFO",
+                "queued_order_opened_waiting_trigger",
+                {
+                    "id": tx_id,
+                    "symbol": symbol,
+                    "side": str(getattr(row, "side", "")),
+                    "exchange": exchange,
+                    "market_open": getattr(clock_or_exc, "next_open_utc", None),
+                },
+            )
+
+    if processed > 0:
+        conn.commit()
+    return {"processed": processed, "filled": filled, "pending_trigger": pending_trigger}
 
 
 def upsert_snapshot(
@@ -2435,49 +2678,22 @@ def render_css() -> None:
         """
         <style>
         :root {
-            --lc-navy-950:#04122d;
-            --lc-navy-900:#0a2558;
-            --lc-navy-800:#123874;
-            --lc-navy-700:#1b4da0;
-            --lc-white:#ffffff;
-            --lc-bg:#edf3ff;
-            --lc-bg-soft:#f7faff;
-            --lc-line:#cbdcf7;
-            --lc-text:#102a5c;
-            --lc-text-soft:#5c739d;
-            --lc-green:#0f9d58;
-            --lc-red:#d93025;
-            --card-radius:20px;
-            --gdg-bg-cell: #ffffff;
-            --gdg-bg-cell-medium: #f8fbff;
-            --gdg-bg-header: #edf4ff;
-            --gdg-bg-header-has-focus: #e6f0ff;
-            --gdg-bg-header-hovered: #e6f0ff;
-            --gdg-bg-row-hover: #edf4ff;
-            --gdg-bg-odd: #f8fbff;
-            --gdg-bg-cell-selected: #e7f0ff;
-            --gdg-text-dark: #102a5c;
-            --gdg-text-medium: #284677;
-            --gdg-text-light: #5b739d;
-            --gdg-text-header: #102a5c;
-            --gdg-text-header-selected: #102a5c;
-            --gdg-accent-color: #123874;
-            --gdg-horizontal-border-color: #d7e3f8;
-            --gdg-vertical-border-color: #d7e3f8;
-            --gdg-border-color: #d7e3f8;
-        }
-
-        div[data-testid="stStatusWidget"],
-        div[data-testid="stSpinner"],
-        div[data-testid="stLoadingSpinner"],
-        div[data-testid="stAppSkeleton"] {
-            display: none !important;
+            --lc-bg: #edf3ff;
+            --lc-bg-soft: #f7faff;
+            --lc-white: #ffffff;
+            --lc-navy-950: #04122d;
+            --lc-navy-900: #0a2558;
+            --lc-navy-800: #123874;
+            --lc-navy-700: #1a4ea4;
+            --lc-text: #102a5c;
+            --lc-text-soft: #5c739d;
+            --lc-line: #cbdcf7;
+            --lc-red: #d93025;
+            --card-radius: 20px;
         }
 
         .stApp {
-            background:
-                radial-gradient(circle at 8% 10%, rgba(19, 77, 160, 0.09), transparent 38%),
-                linear-gradient(180deg, #f8fbff 0%, var(--lc-bg) 100%);
+            background: linear-gradient(180deg, var(--lc-bg-soft) 0%, var(--lc-bg) 100%);
             color: var(--lc-text);
         }
 
@@ -2486,167 +2702,89 @@ def render_css() -> None:
             border-bottom: 1px solid #1d468a;
         }
 
-        section[data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #030f25 0%, #07204c 100%);
-            border-right: 1px solid rgba(173, 196, 234, 0.25);
+        aside[data-testid="stSidebar"],
+        aside[data-testid="stSidebar"] > div,
+        div[data-testid="stSidebar"],
+        div[data-testid="stSidebarContent"] {
+            background: linear-gradient(180deg, #dff0ff 0%, #cfe7ff 100%) !important;
+            background-image: none !important;
+            border-right: 1px solid #a9c9f2 !important;
         }
-        section[data-testid="stSidebar"] .stMarkdown,
-        section[data-testid="stSidebar"] p,
-        section[data-testid="stSidebar"] span,
-        section[data-testid="stSidebar"] label,
-        section[data-testid="stSidebar"] h1,
-        section[data-testid="stSidebar"] h2,
-        section[data-testid="stSidebar"] h3,
-        section[data-testid="stSidebar"] h4 {
-            color: #eaf2ff !important;
+        div[data-testid="stSidebar"] * {
+            color: #0f2f79 !important;
         }
-        section[data-testid="stSidebar"] label[data-testid="stWidgetLabel"] {
-            color: #dbe8ff !important;
-            font-weight: 600 !important;
-        }
-        section[data-testid="stSidebar"] .stCaption {
-            color: #bfd0ef !important;
-        }
-        section[data-testid="stSidebar"] [data-testid="stSidebarContent"] h3 {
-            color: #f4f8ff !important;
-            margin-top: 0.75rem !important;
-            margin-bottom: 0.3rem !important;
+        div[data-testid="stSidebar"] h1,
+        div[data-testid="stSidebar"] h2,
+        div[data-testid="stSidebar"] h3,
+        div[data-testid="stSidebar"] h4 {
+            border-left: 3px solid #1a4ea4;
             padding-left: 0.2rem;
-            border-left: 3px solid #2f6ccc;
         }
 
-        section[data-testid="stSidebar"] .stNumberInput input,
-        section[data-testid="stSidebar"] .stTextInput input,
-        section[data-testid="stSidebar"] .stTextArea textarea,
-        section[data-testid="stSidebar"] .stDateInput input,
-        section[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"],
-        section[data-testid="stSidebar"] [data-baseweb="tag"] {
+        /* Inputs/selects: force fond blanc + texte marine partout */
+        .stNumberInput input,
+        .stTextInput input,
+        .stTextArea textarea,
+        .stDateInput input,
+        div[data-baseweb="select"],
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"],
+        div[data-baseweb="input"] > div,
+        div[data-baseweb="base-input"],
+        div[data-baseweb="base-input"] > div {
             background: #ffffff !important;
             color: #102a5c !important;
-            border: 1px solid #a8c1e8 !important;
+            border-color: #c8d8f5 !important;
         }
-        section[data-testid="stSidebar"] [data-baseweb="select"] * {
+        div[data-baseweb="select"] *,
+        div[data-baseweb="input"] *,
+        div[data-baseweb="base-input"] * {
             color: #102a5c !important;
         }
-        section[data-testid="stSidebar"] [data-baseweb="tag"] {
-            background: #e8f0ff !important;
-            color: #133a80 !important;
-            border: 1px solid #b8cff3 !important;
-        }
-        section[data-testid="stSidebar"] [data-baseweb="slider"] div[role="slider"] {
-            background: #2f6ccc !important;
-            border-color: #2f6ccc !important;
-        }
-        section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button,
-        section[data-testid="stSidebar"] .stButton > button {
-            background: linear-gradient(160deg, #123874 0%, #1a4ea4 100%) !important;
-            border: 1px solid #3c70c7 !important;
-            color: #ffffff !important;
-        }
-        section[data-testid="stSidebar"] [data-testid="stFormSubmitButton"] > button * ,
-        section[data-testid="stSidebar"] .stButton > button * {
-            color: #ffffff !important;
-        }
-
-        div[data-testid="stAppViewContainer"],
-        div[data-testid="stAppViewContainer"] .block-container,
-        div[data-testid="stAppViewContainer"] h1,
-        div[data-testid="stAppViewContainer"] h2,
-        div[data-testid="stAppViewContainer"] h3,
-        div[data-testid="stAppViewContainer"] h4,
-        div[data-testid="stAppViewContainer"] h5,
-        div[data-testid="stAppViewContainer"] h6,
-        div[data-testid="stAppViewContainer"] p,
-        div[data-testid="stAppViewContainer"] li,
-        div[data-testid="stAppViewContainer"] span,
-        div[data-testid="stAppViewContainer"] label,
-        div[data-testid="stAppViewContainer"] small,
-        div[data-testid="stAppViewContainer"] strong {
-            color: var(--lc-text) !important;
-        }
-        div[data-testid="stAppViewContainer"] a {
-            color: #1b5fb8 !important;
-        }
-        div[data-testid="stAppViewContainer"] code {
-            color: #123874 !important;
-            background: #eaf2ff !important;
-            border: 1px solid #cfdef7;
-            border-radius: 6px;
-            padding: 0.08rem 0.34rem;
-        }
-        div[data-testid="stInfo"],
-        div[data-testid="stSuccess"],
-        div[data-testid="stWarning"],
-        div[data-testid="stError"] {
-            border-radius: 12px !important;
-            border: 1px solid #cadcf7 !important;
-        }
-        div[data-testid="stInfo"] *,
-        div[data-testid="stSuccess"] *,
-        div[data-testid="stWarning"] *,
-        div[data-testid="stError"] * {
-            color: #102a5c !important;
-        }
-
-        div[data-testid="stAppViewContainer"] .stNumberInput input,
-        div[data-testid="stAppViewContainer"] .stTextInput input,
-        div[data-testid="stAppViewContainer"] .stTextArea textarea,
-        div[data-testid="stAppViewContainer"] .stDateInput input,
-        div[data-testid="stAppViewContainer"] .stSelectbox div[data-baseweb="select"] {
-            background: var(--lc-white) !important;
-            color: var(--lc-text) !important;
-            border: 1px solid var(--lc-line) !important;
-        }
-        div[data-testid="stAppViewContainer"] [data-baseweb="tag"] {
-            background: #eaf2ff !important;
-            color: #123874 !important;
-            border: 1px solid #c6d8f8 !important;
-        }
-
         div[data-baseweb="popover"] [role="listbox"] {
             background: #ffffff !important;
-            color: var(--lc-text) !important;
-            border: 1px solid var(--lc-line) !important;
+            border: 1px solid #c8d8f5 !important;
         }
         div[data-baseweb="popover"] [role="option"] {
             background: #ffffff !important;
-            color: var(--lc-text) !important;
+            color: #102a5c !important;
         }
         div[data-baseweb="popover"] [role="option"][aria-selected="true"] {
             background: #eaf2ff !important;
             color: #123874 !important;
         }
 
-        .stButton > button {
-            background: linear-gradient(160deg, #123874 0%, #1a4ea4 100%) !important;
-            border: 1px solid #2c62bd !important;
-            color: #ffffff !important;
-            font-weight: 700 !important;
+        /* steppers +/- */
+        div[data-testid="stNumberInput"] button,
+        div[data-testid="stNumberInput"] [role="button"] {
+            background: #ffffff !important;
+            color: #123874 !important;
+            border: 1px solid #c8d8f5 !important;
         }
+
+        .stButton > button,
         div[data-testid="stFormSubmitButton"] > button {
             background: linear-gradient(160deg, #123874 0%, #1a4ea4 100%) !important;
             border: 1px solid #2c62bd !important;
             color: #ffffff !important;
             font-weight: 700 !important;
         }
-        .stButton > button * {
+        .stButton > button:disabled,
+        div[data-testid="stFormSubmitButton"] > button:disabled {
+            background: #8eaee3 !important;
+            border: 1px solid #7ea3de !important;
             color: #ffffff !important;
         }
-        div[data-testid="stFormSubmitButton"] > button * {
+        .stButton > button *,
+        div[data-testid="stFormSubmitButton"] > button *,
+        .stButton > button:disabled *,
+        div[data-testid="stFormSubmitButton"] > button:disabled * {
             color: #ffffff !important;
-        }
-        .stButton > button:hover {
-            filter: brightness(1.05);
-        }
-        .stButton > button:disabled {
-            background: #a7bfeb !important;
-            border: 1px solid #9bb5e4 !important;
-            color: #eff4ff !important;
-        }
-        .stButton > button:disabled * {
-            color: #eff4ff !important;
+            fill: #ffffff !important;
+            opacity: 1 !important;
         }
 
+        /* Tabs */
         div[data-testid="stTabs"] [data-baseweb="tab-list"] {
             gap: 0.3rem;
             border-bottom: 1px solid #c8d9f5;
@@ -2666,27 +2804,7 @@ def render_css() -> None:
             color: #0f2f79 !important;
         }
 
-        div[data-testid="stExpander"] details {
-            background: #ffffff !important;
-            border: 1px solid #c9dcf8 !important;
-            border-radius: 14px !important;
-            overflow: hidden;
-        }
-        div[data-testid="stExpander"] summary {
-            background: #f1f7ff !important;
-            color: #0f2f79 !important;
-            font-weight: 700 !important;
-            border-bottom: 1px solid transparent !important;
-            padding-top: 0.35rem !important;
-            padding-bottom: 0.35rem !important;
-        }
-        div[data-testid="stExpander"] details[open] summary {
-            border-bottom: 1px solid #d4e2f8 !important;
-        }
-        div[data-testid="stExpander"] [data-testid="stMarkdownContainer"] {
-            color: var(--lc-text) !important;
-        }
-
+        /* Data tables */
         .lc-table-wrap {
             width: 100%;
             overflow: auto;
@@ -2694,11 +2812,6 @@ def render_css() -> None:
             border-radius: 14px;
             background: #ffffff;
             box-shadow: 0 4px 16px rgba(13, 41, 88, 0.06);
-        }
-        .lc-empty-table {
-            padding: 0.75rem 0.9rem;
-            color: var(--lc-text-soft);
-            background: #ffffff;
         }
         table.lc-table {
             width: 100%;
@@ -2709,9 +2822,6 @@ def render_css() -> None:
             font-size: 0.95rem;
         }
         table.lc-table thead th {
-            position: sticky;
-            top: 0;
-            z-index: 2;
             background: #eef5ff;
             color: #102a5c;
             border-bottom: 1px solid #d5e3f8;
@@ -2727,60 +2837,32 @@ def render_css() -> None:
             border-bottom: 1px solid #e7eefb;
             border-right: 1px solid #eef3fc;
             padding: 0.5rem 0.6rem;
-            vertical-align: middle;
             white-space: nowrap;
         }
-        table.lc-table tbody tr:nth-child(even) td {
-            background: #fbfdff;
-        }
-        table.lc-table th:last-child,
-        table.lc-table td:last-child {
-            border-right: none;
-        }
-        table.lc-table tbody tr:hover td {
-            background: #f2f7ff;
-        }
 
-        div[data-testid="stDataFrame"] {
-            background: #ffffff !important;
-            border: 1px solid #d1e0f8 !important;
-            border-radius: 14px !important;
-        }
-        div[data-testid="stDataFrame"] canvas,
-        div[data-testid="stDataFrame"] [role="grid"] {
-            background: #ffffff !important;
-            color: #102a5c !important;
-        }
-        div[data-testid="stDataFrame"] [role="grid"] * {
-            color: #102a5c !important;
-        }
-
+        /* Plotly minimal: ne pas toucher aux couches SVG internes */
         div[data-testid="stPlotlyChart"] {
             background: #ffffff !important;
             border: 1px solid #d8e4f8;
             border-radius: 14px;
-            padding: 0.18rem;
-            box-shadow: 0 4px 14px rgba(16, 42, 92, 0.04);
-        }
-        div[data-testid="stPlotlyChart"] .main-svg,
-        div[data-testid="stPlotlyChart"] .svg-container {
-            background: #ffffff !important;
+            padding: 0.2rem;
+            min-height: 420px;
         }
 
-        .backtest-panel {
-            border: 1px solid #d1e0f8;
-            border-radius: 16px;
-            background: #ffffff;
-            padding: 0.9rem 1rem 0.4rem 1rem;
-            box-shadow: 0 8px 24px rgba(20, 42, 90, 0.08);
-            margin-top: 0.8rem;
-            margin-bottom: 1rem;
+        .brand-title-wrap {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            margin-bottom: 0.1rem;
         }
-        .backtest-panel-title {
-            font-size: 1.05rem;
-            font-weight: 700;
-            color: #0f2f79;
-            margin: 0.2rem 0 0.6rem 0;
+        .brand-title-logo {
+            width: 56px;
+            height: 56px;
+            border-radius: 999px;
+            object-fit: contain;
+            border: 1px solid #b9cff2;
+            background: #ffffff;
+            box-shadow: 0 4px 14px rgba(16, 42, 92, 0.08);
         }
         .main-title {
             color: #0f2f79;
@@ -2805,76 +2887,23 @@ def render_css() -> None:
             color: white;
             border-color: #123874;
         }
-        .metric-title {
-            font-size: 1.05rem;
-            font-weight: 700;
-            margin-bottom: 0.7rem;
-        }
-        .metric-value {
-            font-size: 2.1rem;
-            font-weight: 800;
-            margin-bottom: 0.35rem;
-            line-height: 1.05;
-        }
-        .metric-sub {
-            color: #5c739d;
-            font-size: 1rem;
-            margin-bottom: 0.4rem;
-        }
-        .metric-card.primary .metric-sub {
-            color: rgba(255,255,255,0.88);
-        }
+        .metric-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.7rem; }
+        .metric-value { font-size: 2.2rem; font-weight: 800; line-height: 1.05; margin-bottom: 0.6rem; }
+        .metric-sub { color: var(--lc-text-soft); font-size: 0.98rem; }
+        .metric-card.primary .metric-title,
+        .metric-card.primary .metric-value,
+        .metric-card.primary .metric-sub { color: #ffffff !important; }
+
         .event-pill {
-            display:inline-block;
-            padding: 0.2rem 0.5rem;
             border-radius: 999px;
-            font-size: 0.8rem;
+            padding: 0.2rem 0.55rem;
+            font-size: 0.9rem;
             font-weight: 700;
+            display: inline-block;
         }
-        .event-pill.gain {
-            background: #d9f7e6;
-            color: #0d7b44 !important;
-        }
-        .event-pill.loss {
-            background: #ffe3e3;
-            color: #b42318 !important;
-        }
-        .event-pill.neutral {
-            background: #eaf2ff;
-            color: #1f4a9b !important;
-        }
-        .lc-refresh-badge {
-            width: 78px;
-            height: 78px;
-            border-radius: 999px;
-            background: rgba(255, 255, 255, 0.97);
-            border: 2px solid #ceddf6;
-            box-shadow: 0 12px 30px rgba(7, 23, 51, .2);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            animation: lcPulse 0.9s ease-in-out infinite;
-        }
-        .lc-refresh-badge img {
-            width: 54px;
-            height: 54px;
-            object-fit: contain;
-            animation: lcFloat .9s ease-in-out infinite;
-        }
-        @keyframes lcPulse {
-            0%,100% { transform: scale(1.0); box-shadow: 0 14px 34px rgba(7,23,51,.20); }
-            50% { transform: scale(1.05); box-shadow: 0 22px 44px rgba(7,23,51,.27); }
-        }
-        @keyframes lcFloat {
-            0%,100% { transform: translateY(0px); }
-            50% { transform: translateY(-4px); }
-        }
-        @keyframes lcBadgeShow {
-            0% { opacity: 0; transform: scale(.86); }
-            20% { opacity: 1; transform: scale(1); }
-            78% { opacity: 1; transform: scale(1); }
-            100% { opacity: 0; transform: scale(.92); }
-        }
+        .event-pill.gain { background: #d9f7e6; color: #0d7b44 !important; }
+        .event-pill.loss { background: #ffe3e3; color: #b42318 !important; }
+        .event-pill.neutral { background: #eaf2ff; color: #1f4a9b !important; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -2900,8 +2929,12 @@ def _fallback_logo_svg() -> str:
 @st.cache_data(show_spinner=False)
 def get_refresh_logo_data_uri() -> str:
     candidates = [
+        Path("asset/liberty_capital_logo.png"),
+        Path("asset/liberty-capital-logo.png"),
+        Path("asset/logo.png"),
         Path("assets/liberty_capital_logo.png"),
         Path("assets/liberty-capital-logo.png"),
+        Path("assets/logo.png"),
         Path("screenshots/liberty_capital_logo.png"),
         Path("screenshots/liberty-capital-logo.png"),
         Path("output/liberty_capital_logo.png"),
@@ -2918,6 +2951,29 @@ def get_refresh_logo_data_uri() -> str:
     fallback_svg = _fallback_logo_svg().encode("utf-8")
     payload = base64.b64encode(fallback_svg).decode("ascii")
     return f"data:image/svg+xml;base64,{payload}"
+
+
+@st.cache_data(show_spinner=False)
+def get_logo_image_bytes() -> bytes | None:
+    candidates = [
+        Path("asset/liberty_capital_logo.png"),
+        Path("asset/liberty-capital-logo.png"),
+        Path("asset/logo.png"),
+        Path("assets/liberty_capital_logo.png"),
+        Path("assets/liberty-capital-logo.png"),
+        Path("assets/logo.png"),
+        Path("screenshots/liberty_capital_logo.png"),
+        Path("screenshots/liberty-capital-logo.png"),
+        Path("output/liberty_capital_logo.png"),
+        Path("output/liberty-capital-logo.png"),
+    ]
+    for logo_path in candidates:
+        if logo_path.exists():
+            try:
+                return logo_path.read_bytes()
+            except Exception:
+                continue
+    return None
 
 
 def render_refresh_logo_animation(visible: bool) -> None:
@@ -3142,6 +3198,21 @@ def apply_plot_theme(
     return fig
 
 
+def render_plotly_safe(fig: go.Figure, *, use_container_width: bool = True) -> None:
+    safe_fig = fig if isinstance(fig, go.Figure) else go.Figure()
+    if safe_fig.layout.height is None:
+        safe_fig.update_layout(height=420)
+    safe_fig.update_layout(autosize=True)
+    if len(safe_fig.data) == 0:
+        st.info("Graphique en attente de données.")
+    st.plotly_chart(
+        safe_fig,
+        use_container_width=use_container_width,
+        theme=None,
+        config={"responsive": True, "displaylogo": False},
+    )
+
+
 def render_metric_card(
     title: str,
     value: str,
@@ -3186,7 +3257,9 @@ def create_evolution_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go
         )
         return fig
     points = snapshots.copy()
-    points["captured_local"] = pd.to_datetime(points["captured_at_utc"], errors="coerce", utc=True).dt.tz_convert(DISPLAY_TZ)
+    points["captured_local"] = (
+        pd.to_datetime(points["captured_at_utc"], errors="coerce", utc=True).dt.tz_convert(DISPLAY_TZ).dt.tz_localize(None)
+    )
     points["portfolio_value"] = pd.to_numeric(points.get("portfolio_value"), errors="coerce")
     points = points.dropna(subset=["captured_local", "portfolio_value"]).sort_values("captured_local")
     if points.empty:
@@ -3301,7 +3374,7 @@ def create_drawdown_chart(snapshots: pd.DataFrame, currency: str = "EUR") -> go.
         )
         return fig
     pts = snapshots.copy()
-    pts["captured_local"] = pd.to_datetime(pts["captured_at_utc"], utc=True).dt.tz_convert(DISPLAY_TZ)
+    pts["captured_local"] = pd.to_datetime(pts["captured_at_utc"], utc=True).dt.tz_convert(DISPLAY_TZ).dt.tz_localize(None)
     values = pd.to_numeric(pts["portfolio_value"], errors="coerce")
     peak = values.cummax()
     drawdown = (values / peak - 1.0) * 100
@@ -3411,7 +3484,7 @@ def create_benchmark_relative_chart(df: pd.DataFrame) -> go.Figure:
             font={"color": "#4f6388", "size": 13},
         )
         return fig
-    x = pd.to_datetime(df["date"], errors="coerce")
+    x = pd.to_datetime(df["date"], errors="coerce", utc=True).dt.tz_localize(None)
     if "equity" in df.columns:
         s = pd.to_numeric(df["equity"], errors="coerce")
         if not s.dropna().empty:
@@ -3488,8 +3561,8 @@ def render_positions_portefeuille(holdings: pd.DataFrame, base_currency: str, sp
 
     view = holdings[
         [
-            "symbol",
             "nom",
+            "symbol",
             "zone",
             "secteur",
             "type",
@@ -3509,8 +3582,8 @@ def render_positions_portefeuille(holdings: pd.DataFrame, base_currency: str, sp
     render_dataframe_fr(
         view.rename(
             columns={
-                "symbol": "Ticker",
                 "nom": "Nom",
+                "symbol": "Ticker",
                 "zone": "Zone",
                 "secteur": "Secteur",
                 "type": "Type",
@@ -3594,7 +3667,7 @@ def render_quick_sell_panel(
     qmap = quotes.set_index("symbol").to_dict(orient="index") if quotes is not None and not quotes.empty else {}
     rows = holdings.copy()
     rows["label"] = rows.apply(
-        lambda r: f"{r['symbol']} · {r['nom']} · qty {safe_float(r['quantite'], 0.0):.4f}", axis=1
+        lambda r: f"{r['nom']} ({r['symbol']}) · qty {safe_float(r['quantite'], 0.0):.4f}", axis=1
     )
     symbols = rows["symbol"].astype(str).tolist()
     labels_by_symbol = dict(zip(rows["symbol"].astype(str), rows["label"].astype(str)))
@@ -3728,6 +3801,42 @@ def render_quick_sell_panel(
                 return
             if np.isnan(unit_quote) or safe_float(unit_quote, 0.0) <= 0:
                 st.error("Cours de marché indisponible. Vente rapide impossible.")
+                return
+            market_is_open, market_clock = market_clock_for_exchange(trade_exchange)
+            if not market_is_open:
+                next_open_text = ""
+                if not isinstance(market_clock, Exception):
+                    next_open_text = to_display_time(getattr(market_clock, "next_open_utc", None))
+                insert_transaction(
+                    conn,
+                    symbol=str(symbol),
+                    side="SELL",
+                    quantity=float(qty_target),
+                    price=float(unit_quote),
+                    fees=float(fees),
+                    currency=quote_currency,
+                    fx_to_base=float(fx_to_base),
+                    exchange=trade_exchange,
+                    strategy_tag="vente_rapide",
+                    note=note,
+                    order_type=order_type,
+                    trigger_price=float(trigger_price) if order_type != "MARKET" else None,
+                    execution_status="PENDING_OPEN",
+                    fill_ratio=0.0,
+                    executed_quantity=0.0,
+                    executed_price=0.0,
+                    slippage_bps=float(slippage_bps),
+                    spread_bps=float(spread_bps),
+                )
+                st.session_state["pending_snapshot_event"] = None
+                fetch_quotes.clear()
+                fetch_realtime_quotes.clear()
+                fetch_polygon_snapshot_quotes.clear()
+                st.warning(
+                    "Marché fermé: vente rapide enregistrée en attente d'ouverture."
+                    + (f" Prochaine ouverture estimée: {next_open_text}." if next_open_text else "")
+                )
+                st.rerun()
                 return
 
             execution = simulate_order_execution(
@@ -4524,8 +4633,15 @@ def main() -> None:
     if "pending_tab_focus" not in st.session_state:
         st.session_state["pending_tab_focus"] = ""
 
-    st.markdown(f"<div class='main-title'>{APP_TITLE}</div>", unsafe_allow_html=True)
+    brand_logo = get_logo_image_bytes()
+    brand_c1, brand_c2 = st.columns([0.08, 0.92])
+    with brand_c1:
+        if brand_logo:
+            st.image(brand_logo, width=56)
+    with brand_c2:
+        st.markdown("<div class='main-title'>Liberty Bourse</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='subtitle'>{APP_SUBTITLE}</div>", unsafe_allow_html=True)
+    st.caption("Build UI: css-v3")
     if auth_email:
         st.caption(f"Session Base44: {auth_email}")
     elif get_auth_mode() == "required":
@@ -4635,6 +4751,7 @@ def main() -> None:
             "Actifs sélectionnés (temps réel)",
             options=universe_symbols,
             default=[s for s in st.session_state["realtime_symbols"] if s in universe_symbols],
+            format_func=symbol_with_name_label,
         )
         polygon_help = (
             "Utilise POLYGON_API_KEY ou colle la clé ici pour activer le flux tick-by-tick."
@@ -4777,7 +4894,15 @@ def main() -> None:
     held_symbols = tuple(sorted(set(positions_raw["symbol"].tolist()))) if not positions_raw.empty else tuple()
     split_factors = fetch_split_factors(held_symbols, lookback_years=2) if held_symbols else {}
     positions = apply_split_adjustments_to_positions(positions_raw, split_factors) if not positions_raw.empty else positions_raw
-    symbols_for_quotes = tuple(sorted(set(positions["symbol"].tolist() + st.session_state["realtime_symbols"])))
+    pending_open_symbols = (
+        transactions.loc[transactions["execution_status"].astype(str).str.upper() == "PENDING_OPEN", "symbol"]
+        .astype(str)
+        .str.upper()
+        .tolist()
+        if not transactions.empty
+        else []
+    )
+    symbols_for_quotes = tuple(sorted(set(positions["symbol"].tolist() + st.session_state["realtime_symbols"] + pending_open_symbols)))
     trailing_dividends = fetch_trailing_dividends_per_share(tuple(sorted(set(positions["symbol"].tolist())))) if not positions.empty else {}
     quotes = pd.DataFrame(
         columns=[
@@ -4887,6 +5012,32 @@ def main() -> None:
         quote_currencies += [str(c).upper() for c in positions["currency"].tolist()]
     fx_rates = fetch_fx_rates(base_currency, tuple(sorted(set(quote_currencies))))
 
+    queue_result = process_pending_open_orders(
+        conn,
+        quotes=quotes,
+        fx_rates=fx_rates,
+        base_currency=base_currency,
+    )
+    if queue_result["processed"] > 0:
+        fetch_quotes.clear()
+        fetch_realtime_quotes.clear()
+        fetch_polygon_snapshot_quotes.clear()
+        transactions = load_transactions(conn)
+        positions_raw = compute_positions(transactions, accounting_method=st.session_state["accounting_method"])
+        held_symbols = tuple(sorted(set(positions_raw["symbol"].tolist()))) if not positions_raw.empty else tuple()
+        split_factors = fetch_split_factors(held_symbols, lookback_years=2) if held_symbols else {}
+        positions = apply_split_adjustments_to_positions(positions_raw, split_factors) if not positions_raw.empty else positions_raw
+        trailing_dividends = fetch_trailing_dividends_per_share(tuple(sorted(set(positions["symbol"].tolist())))) if not positions.empty else {}
+        if queue_result["filled"] > 0:
+            st.session_state["pending_snapshot_event"] = {
+                "type": "OPEN",
+                "label": f"Exécution à l'ouverture: {queue_result['filled']} ordre(s)",
+            }
+        st.info(
+            f"Ouverture détectée: {queue_result['processed']} ordre(s) en attente traité(s), "
+            f"{queue_result['filled']} exécuté(s)."
+        )
+
     profiles = fetch_profiles(symbols_for_quotes)
     holdings, state = compute_portfolio_state(
         float(get_setting(conn, "initial_capital", str(DEFAULT_INITIAL_CAPITAL))),
@@ -4899,6 +5050,7 @@ def main() -> None:
         trailing_dividends_per_share=trailing_dividends,
     )
     quote_freshness_note = quote_freshness_summary(quotes)
+    quote_degraded_note = quote_degraded_mode_message(quotes)
     provider_health_df = provider_health_table()
 
     pending = st.session_state.get("pending_snapshot_event")
@@ -4960,6 +5112,8 @@ def main() -> None:
     st.session_state["pending_tab_focus"] = ""
 
     with tabs[0]:
+        if quote_degraded_note:
+            st.warning(quote_degraded_note)
         status, market_subtitle, market_detail = create_market_clock_card(get_setting(conn, "exchange", DEFAULT_EXCHANGE))
         latest_quote = None
         if not quotes.empty and "quote_time_utc" in quotes.columns:
@@ -5020,19 +5174,22 @@ def main() -> None:
             if fx_rates:
                 st.caption("FX temps réel: " + ", ".join([f"1 {k} = {v:.4f} {state['base_currency']}" for k, v in fx_rates.items() if not np.isnan(v)]))
 
-        st.plotly_chart(create_evolution_chart(snapshots, currency=state["base_currency"]), use_container_width=True)
+        render_plotly_safe(
+            create_evolution_chart(snapshots, currency=state["base_currency"]),
+            use_container_width=True,
+        )
         st.caption(f"Fraîcheur graphique évolution: {quote_freshness_note}")
         a1, a2 = st.columns(2)
         with a1:
             sector_alloc = holdings.groupby("secteur", as_index=False)["valeur_marche"].sum() if not holdings.empty else pd.DataFrame()
-            st.plotly_chart(
+            render_plotly_safe(
                 create_allocation_chart(sector_alloc, "secteur", "valeur_marche", "Répartition par secteur"),
                 use_container_width=True,
             )
             st.caption(f"Fraîcheur répartition secteur: {quote_freshness_note}")
         with a2:
             geo_alloc = holdings.groupby("zone", as_index=False)["valeur_marche"].sum() if not holdings.empty else pd.DataFrame()
-            st.plotly_chart(
+            render_plotly_safe(
                 create_allocation_chart(geo_alloc, "zone", "valeur_marche", "Répartition par zone géographique"),
                 use_container_width=True,
             )
@@ -5040,10 +5197,16 @@ def main() -> None:
 
         p1, p2 = st.columns(2)
         with p1:
-            st.plotly_chart(create_pnl_contribution_chart(holdings, transactions, state["base_currency"]), use_container_width=True)
+            render_plotly_safe(
+                create_pnl_contribution_chart(holdings, transactions, state["base_currency"]),
+                use_container_width=True,
+            )
             st.caption(f"Fraîcheur contribution gain/perte: {quote_freshness_note}")
         with p2:
-            st.plotly_chart(create_drawdown_chart(snapshots, currency=state["base_currency"]), use_container_width=True)
+            render_plotly_safe(
+                create_drawdown_chart(snapshots, currency=state["base_currency"]),
+                use_container_width=True,
+            )
             st.caption(f"Fraîcheur repli maximal: {quote_freshness_note}")
 
         pos_col, sell_col = st.columns([2.5, 1.5])
@@ -5067,12 +5230,12 @@ def main() -> None:
         region_tabs = st.tabs(["USA", "Europe", "Asie", "Pays émergent"])
         for region, region_tab in zip(["USA", "Europe", "Asie", "Pays émergent"], region_tabs):
             with region_tab:
-                region_df = universe_df[universe_df["zone"] == region][["symbol", "name", "asset_type", "sector"]]
+                region_df = universe_df[universe_df["zone"] == region][["name", "symbol", "asset_type", "sector"]]
                 render_dataframe_fr(region_df, use_container_width=True, hide_index=True)
 
         st.markdown("#### Métaux précieux et terres rares")
         metals_df = universe_df[universe_df["asset_type"].isin(["Métal précieux", "Terres rares"])][
-            ["symbol", "name", "asset_type", "zone", "sector"]
+            ["name", "symbol", "asset_type", "zone", "sector"]
         ]
         render_dataframe_fr(metals_df, use_container_width=True, hide_index=True)
 
@@ -5082,6 +5245,7 @@ def main() -> None:
             st.info("Aucune cotation temps réel disponible pour la sélection actuelle.")
         else:
             live_watch["maj"] = live_watch["quote_time_utc"].apply(to_display_time)
+            live_watch["name"] = live_watch["symbol"].map(symbol_display_name)
             live_watch["variation_%"] = live_watch["change_pct"].round(2)
             live_watch["age_s"] = pd.to_numeric(live_watch.get("data_age_seconds"), errors="coerce").round(1)
             live_watch["stale_actif"] = live_watch.get("symbol_stale", False).map(lambda v: "Oui" if bool(v) else "Non")
@@ -5089,6 +5253,7 @@ def main() -> None:
             render_dataframe_fr(
                 live_watch[
                     [
+                        "name",
                         "symbol",
                         "last",
                         "previous",
@@ -5106,6 +5271,7 @@ def main() -> None:
                     ]
                 ].rename(
                     columns={
+                        "name": "Nom",
                         "symbol": "Ticker",
                         "last": "Prix unitaire",
                         "previous": "Précédent",
@@ -5131,7 +5297,7 @@ def main() -> None:
         held_qty = holdings.set_index("symbol")["quantite"].to_dict() if not holdings.empty else {}
         available_symbols = sorted(set(universe_df["symbol"].tolist() + list(held_qty.keys())))
         can_sell = any(float(v) > 0 for v in held_qty.values())
-        with st.form("trade_form"):
+        with st.container():
             t1, t2, t3, t4 = st.columns(4)
             with t1:
                 side_options = ["BUY", "SELL"] if can_sell else ["BUY"]
@@ -5139,7 +5305,12 @@ def main() -> None:
                 if not can_sell:
                     st.caption("Vente indisponible tant qu'aucune position n'est ouverte.")
             with t2:
-                symbol = st.selectbox("Actif", available_symbols, index=0)
+                symbol = st.selectbox(
+                    "Actif",
+                    available_symbols,
+                    index=0,
+                    format_func=symbol_with_name_label,
+                )
             with t3:
                 order_type = st.selectbox("Type d'ordre", ["MARKET", "LIMIT", "STOP"], format_func=lambda x: localize_text_fr(x))
             with t4:
@@ -5213,18 +5384,53 @@ def main() -> None:
                 st.caption(f"Cotation utilisée: {price:.4f} {market_currency} | contexte: {quote_ctx} | source: {quote_src} | maj: {quote_at}")
             else:
                 st.caption("Cotation indisponible actuellement pour cet actif.")
-            submitted = st.form_submit_button("Enregistrer la transaction", use_container_width=True)
+            submitted = st.button("Enregistrer la transaction", use_container_width=True, key="trade_submit_button")
             if submitted:
                 quote_currency = market_currency
                 fx_to_base = safe_float(fx_rates.get(quote_currency, np.nan), np.nan)
                 if np.isnan(fx_to_base) or fx_to_base <= 0:
                     fx_to_base = 1.0 if quote_currency == state["base_currency"] else safe_float(market_quote.get("fx_to_base", 1.0), 1.0)
+                market_is_open, market_clock = market_clock_for_exchange(trade_exchange)
                 if quantity <= 0:
                     st.error("La quantité doit être positive.")
                 elif price <= 0:
                     st.error("Prix de marché indisponible. Impossible d'exécuter l'ordre pour éviter un prix incohérent.")
                 elif side == "SELL" and quantity > float(held_qty.get(symbol, 0.0)):
                     st.error("Quantité vendue supérieure à la position détenue.")
+                elif not market_is_open:
+                    next_open_text = ""
+                    if not isinstance(market_clock, Exception):
+                        next_open_text = to_display_time(getattr(market_clock, "next_open_utc", None))
+                    insert_transaction(
+                        conn,
+                        symbol=symbol,
+                        side=side,
+                        quantity=float(quantity),
+                        price=float(price),
+                        fees=float(fees),
+                        currency=quote_currency,
+                        fx_to_base=float(fx_to_base),
+                        exchange=trade_exchange,
+                        strategy_tag=strategy_tag,
+                        note=note,
+                        order_type=order_type,
+                        trigger_price=float(trigger_price) if order_type != "MARKET" else None,
+                        execution_status="PENDING_OPEN",
+                        fill_ratio=0.0,
+                        executed_quantity=0.0,
+                        executed_price=0.0,
+                        slippage_bps=float(slippage_bps),
+                        spread_bps=float(spread_bps),
+                    )
+                    st.session_state["pending_snapshot_event"] = None
+                    fetch_quotes.clear()
+                    fetch_realtime_quotes.clear()
+                    fetch_polygon_snapshot_quotes.clear()
+                    st.warning(
+                        "Marché fermé: ordre enregistré en attente d'ouverture."
+                        + (f" Prochaine ouverture estimée: {next_open_text}." if next_open_text else "")
+                    )
+                    st.rerun()
                 else:
                     execution = simulate_order_execution(
                         side=side,
@@ -5321,6 +5527,8 @@ def main() -> None:
 
     with tabs[2]:
         st.subheader("Analyse des marchés")
+        if quote_degraded_note:
+            st.warning(quote_degraded_note)
         selected = st.session_state["realtime_symbols"]
         st.caption("La sélection des actifs temps réel se pilote dans la barre latérale.")
         st.caption(quote_freshness_note)
@@ -5334,6 +5542,7 @@ def main() -> None:
             st.warning("Impossible de charger les cotations en temps réel pour le moment.")
         else:
             table = market_quotes.copy()
+            table["name"] = table["symbol"].map(symbol_display_name)
             table["variation_%"] = table["change_pct"].round(2)
             table["age_s"] = pd.to_numeric(table.get("data_age_seconds"), errors="coerce").round(1)
             table["stale_actif"] = table.get("symbol_stale", False).map(lambda v: "Oui" if bool(v) else "Non")
@@ -5341,6 +5550,7 @@ def main() -> None:
             render_dataframe_fr(
                 table[
                     [
+                        "name",
                         "symbol",
                         "last",
                         "previous",
@@ -5357,6 +5567,7 @@ def main() -> None:
                     ]
                 ].rename(
                     columns={
+                        "name": "Nom",
                         "symbol": "Ticker",
                         "last": "Dernier",
                         "previous": "Précédent",
@@ -5472,7 +5683,12 @@ def main() -> None:
                 if st.session_state["benchmark_symbol"] in {"SPY", "EWJ", "EEM", "VGK", "QQQ", "VTI", "ACWI"}
                 else 0,
             )
-        bt_symbols = st.multiselect("Actifs de simulation", options=universe_symbols, default=st.session_state["realtime_symbols"])
+        bt_symbols = st.multiselect(
+            "Actifs de simulation",
+            options=universe_symbols,
+            default=st.session_state["realtime_symbols"],
+            format_func=symbol_with_name_label,
+        )
         b2, b3, b4 = st.columns(3)
         with b2:
             bt_capital = st.number_input("Capital initial de simulation", min_value=1.0, value=float(state["initial_capital"]), step=1000.0)
@@ -5636,8 +5852,11 @@ def main() -> None:
                     }
                 )
                 fig_bt.update_xaxes(tickformat="%b %Y", tickangle=0, nticks=8)
-                st.plotly_chart(fig_bt, use_container_width=True)
-                st.plotly_chart(create_benchmark_relative_chart(bt_curve_df), use_container_width=True)
+                render_plotly_safe(fig_bt, use_container_width=True)
+                render_plotly_safe(
+                    create_benchmark_relative_chart(bt_curve_df),
+                    use_container_width=True,
+                )
                 st.caption(f"Fraîcheur vues simulation: {quote_freshness_note}")
             else:
                 st.info("Courbes de simulation indisponibles pour cette exécution (données insuffisantes).")
@@ -5694,7 +5913,7 @@ def main() -> None:
                 )
                 fig_cmp.update_xaxes(showgrid=True, gridcolor="#dbe5f5", linecolor="#bfd0ea", tickfont={"color": "#102a5c"})
                 fig_cmp.update_yaxes(showgrid=True, gridcolor="#dbe5f5", linecolor="#bfd0ea", tickfont={"color": "#102a5c"})
-                st.plotly_chart(fig_cmp, use_container_width=True)
+                render_plotly_safe(fig_cmp, use_container_width=True)
 
         st.markdown("#### Rebalancement assisté")
         st.caption("Propose des ordres de réduction/renforcement selon les contraintes ligne/secteur/zone.")
