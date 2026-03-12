@@ -1,0 +1,215 @@
+{
+  "metadata": {
+    "source": "synthetic",
+    "generated_at_utc": "2026-02-28T17:17:30.450235+00:00",
+    "risk_free_rate_annual": 0.02,
+    "allow_short": false,
+    "exchange": "XNYS",
+    "market_hours_enforced": true,
+    "benchmark": null,
+    "assets": [
+      "ASSET_1",
+      "ASSET_2",
+      "ASSET_3",
+      "ASSET_4",
+      "ASSET_5",
+      "ASSET_6"
+    ],
+    "market_clock": {
+      "exchange": "XNYS",
+      "timezone": "America/New_York",
+      "is_open": false,
+      "next_open_utc": "2026-03-02T14:30:00+00:00",
+      "next_close_utc": "2026-03-02T21:00:00+00:00",
+      "current_session_open_utc": null,
+      "current_session_close_utc": null
+    },
+    "market_clock_warning": null,
+    "data_warning": null
+  },
+  "portfolios": {
+    "max_sharpe": {
+      "metrics": {
+        "expected_return_annual": 0.1570584887752665,
+        "volatility_annual": 0.23796365958072624,
+        "sharpe": 0.5759639476748386,
+        "sortino": 0.9490403360518702,
+        "max_drawdown": -0.22806356541576012,
+        "var_95": -0.023875698285672067,
+        "cvar_95": -0.030196322831647027,
+        "annualized_return_realized": 0.17000680602640972,
+        "annualized_vol_realized": 0.23796365958072624
+      },
+      "weights": {
+        "ASSET_2": 0.7563650372384912,
+        "ASSET_4": 0.24363496276150853,
+        "ASSET_5": 2.3071877916703926e-16,
+        "ASSET_1": 1.5530105492013398e-16,
+        "ASSET_3": 0.0,
+        "ASSET_6": 0.0
+      }
+    },
+    "minimum_variance": {
+      "metrics": {
+        "expected_return_annual": -0.020365956002671583,
+        "volatility_annual": 0.15913272090343483,
+        "sharpe": -0.12798094500646467,
+        "sortino": -0.40795316619429794,
+        "max_drawdown": -0.38694030078631925,
+        "var_95": -0.016938084119850396,
+        "cvar_95": -0.02136313558348972,
+        "annualized_return_realized": -0.02016077706648034,
+        "annualized_vol_realized": 0.15913272090343483
+      },
+      "weights": {
+        "ASSET_5": 0.32051564482854705,
+        "ASSET_1": 0.24786513708977237,
+        "ASSET_3": 0.18282311117308905,
+        "ASSET_6": 0.12998864005052063,
+        "ASSET_4": 0.08983151653621996,
+        "ASSET_2": 0.028975950321850876
+      }
+    },
+    "risk_parity": {
+      "metrics": {
+        "expected_return_annual": 0.0028567210758726905,
+        "volatility_annual": 0.16289525649886671,
+        "sharpe": -0.10524111808158501,
+        "sortino": -0.16866101196284974,
+        "max_drawdown": -0.33479280776171094,
+        "var_95": -0.01688103142993083,
+        "cvar_95": -0.02164299142228452,
+        "annualized_return_realized": 0.0028607891534906393,
+        "annualized_vol_realized": 0.16289525649886671
+      },
+      "weights": {
+        "ASSET_1": 0.18068490564956927,
+        "ASSET_5": 0.18049511097846524,
+        "ASSET_3": 0.17938282879733686,
+        "ASSET_6": 0.16485851842760663,
+        "ASSET_4": 0.14926416621982722,
+        "ASSET_2": 0.14531446992719477
+      }
+    },
+    "equal_weight": {
+      "metrics": {
+        "expected_return_annual": 0.009691956870751289,
+        "volatility_annual": 0.16443801193701574,
+        "sharpe": -0.06268649813886691,
+        "sortino": -0.09966126850862979,
+        "max_drawdown": -0.31948497954919186,
+        "var_95": -0.01701771346334935,
+        "cvar_95": -0.021749570530392726,
+        "annualized_return_realized": 0.009738887799883411,
+        "annualized_vol_realized": 0.16443801193701577
+      },
+      "weights": {
+        "ASSET_1": 0.16666666666666666,
+        "ASSET_2": 0.16666666666666666,
+        "ASSET_3": 0.16666666666666666,
+        "ASSET_4": 0.16666666666666666,
+        "ASSET_5": 0.16666666666666666,
+        "ASSET_6": 0.16666666666666666
+      }
+    }
+  },
+  "market_cycles": {
+    "recent_phases": [
+      {
+        "start": "2020-03-11",
+        "end": "2021-02-12",
+        "phase": "bear",
+        "duration_days": 338
+      },
+      {
+        "start": "2021-02-12",
+        "end": "2021-03-10",
+        "phase": "bull",
+        "duration_days": 26
+      },
+      {
+        "start": "2021-03-10",
+        "end": "2021-04-06",
+        "phase": "bear",
+        "duration_days": 27
+      },
+      {
+        "start": "2021-04-06",
+        "end": "2021-06-11",
+        "phase": "bull",
+        "duration_days": 66
+      },
+      {
+        "start": "2021-06-11",
+        "end": "2021-10-04",
+        "phase": "bear",
+        "duration_days": 115
+      },
+      {
+        "start": "2021-10-04",
+        "end": "2021-10-07",
+        "phase": "bull",
+        "duration_days": 3
+      },
+      {
+        "start": "2021-10-07",
+        "end": "2021-11-30",
+        "phase": "bear",
+        "duration_days": 54
+      },
+      {
+        "start": "2021-11-30",
+        "end": "2022-08-05",
+        "phase": "bull",
+        "duration_days": 248
+      }
+    ],
+    "dominant_cycles_days": [
+      {
+        "period_days": 25.510638297872344,
+        "power": 0.8771505123134884
+      },
+      {
+        "period_days": 5.655660377358491,
+        "power": 0.8721062059936945
+      },
+      {
+        "period_days": 5.848780487804878,
+        "power": 0.7920042421925018
+      },
+      {
+        "period_days": 5.576744186046512,
+        "power": 0.7709805835143382
+      },
+      {
+        "period_days": 2.0287648054145517,
+        "power": 0.6890826604242491
+      },
+      {
+        "period_days": 7.094674556213018,
+        "power": 0.6851651004321636
+      },
+      {
+        "period_days": 4.023489932885906,
+        "power": 0.6494370994538144
+      },
+      {
+        "period_days": 3.0201511335012596,
+        "power": 0.6078122198664155
+      },
+      {
+        "period_days": 2.2708333333333335,
+        "power": 0.6003062202015961
+      },
+      {
+        "period_days": 2.2453183520599254,
+        "power": 0.5510013061051328
+      }
+    ],
+    "kondratiev_proxy": {
+      "available": false,
+      "message": "Historique insuffisant pour approximer un cycle de Kondratiev (>= 40 ans requis).",
+      "span_years": 4.67
+    }
+  }
+}
